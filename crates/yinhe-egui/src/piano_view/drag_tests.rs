@@ -1,4 +1,5 @@
 use super::*;
+use crate::widgets::selection_actions::{SelectionDragMode, store_drag_mode};
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_test_helpers::make_midi;
 
@@ -111,6 +112,10 @@ struct SelFrameOutFull {
     pencil_drag: Option<yinhe_types::PencilNoteDrag>,
     scale_delta: Option<u64>,
     riff_repeat: Option<(i64, i64)>,
+    warp: Option<(f64, f64, f32)>,
+    velocity_delta: Option<i16>,
+    ghost_count: usize,
+    hidden_count: usize,
 }
 
 /// run_sel_frame 的完整版：额外返回选框整体变速 / Riff 的提交结果。
@@ -136,10 +141,16 @@ fn run_sel_frame_full(
         pencil_drag: None,
         scale_delta: None,
         riff_repeat: None,
+        warp: None,
+        velocity_delta: None,
+        ghost_count: 0,
+        hidden_count: 0,
     };
+    let mut selection_warp: Option<(f64, f64, f32)> = None;
+    let mut selection_velocity_delta: Option<i16> = None;
     // run_ui 返回的 FullOutput 含字体纹理 delta，丢弃前必须 clear（epaint 断言）。
     ctx.run_ui(raw, |ui| {
-        let (_, _, previews, note_event, pencil_drag, _) = sel_drag_frame(
+        let (ghosts, hidden, previews, note_event, pencil_drag, _) = sel_drag_frame(
             ui,
             content(),
             content(),
@@ -155,6 +166,8 @@ fn run_sel_frame_full(
             note_resize_delta,
             selection_scale_delta,
             riff_repeat,
+            &mut selection_warp,
+            &mut selection_velocity_delta,
             sel_rect,
             &[[0.5, 0.5, 0.5, 1.0]],
             &[true],
@@ -172,6 +185,10 @@ fn run_sel_frame_full(
             pencil_drag,
             scale_delta: *selection_scale_delta,
             riff_repeat: *riff_repeat,
+            warp: selection_warp,
+            velocity_delta: selection_velocity_delta,
+            ghost_count: ghosts.len(),
+            hidden_count: hidden.len(),
         };
     })
     .textures_delta
@@ -2028,6 +2045,8 @@ fn note_drag_ghost_survives_viewport_cull() {
     let mut note_resize_delta = None;
     let mut selection_scale_delta = None;
     let mut riff_repeat = None;
+    let mut selection_warp = None;
+    let mut selection_velocity_delta = None;
     let track_selected = std::collections::HashSet::new();
 
     // 屏幕坐标：tick 1100 → x = 200 + 1100 = 1300；key 70 → y = (127-70)*10 = 570。
@@ -2053,6 +2072,8 @@ fn note_drag_ghost_survives_viewport_cull() {
                 &mut note_resize_delta,
                 &mut selection_scale_delta,
                 &mut riff_repeat,
+                &mut selection_warp,
+                &mut selection_velocity_delta,
                 &mut sel_rect,
                 &[[0.5, 0.5, 0.5, 1.0]],
                 &[true],
@@ -2169,4 +2190,209 @@ fn note_move_free_within_one_quantize_then_latches() {
         "越过一格后缩回，仍应量化"
     );
     assert_eq!(rects, vec![(0.0, 480.0, 100, 110)], "选框应回到网格起点");
+}
+
+/// 时间渐变：左缘上拉 120px → γ=0.5，不提交 Gate/Scale/Riff。
+#[test]
+fn left_edge_vertical_drag_commits_time_warp() {
+    let ctx = egui::Context::default();
+    store_drag_mode(&ctx, SelectionDragMode::Gate);
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let midi = make_midi(vec![
+        (100, 0, 120, 0, 100),
+        (100, 240, 360, 0, 100),
+        (100, 480, 600, 0, 100),
+    ]);
+    let mut selected = yinhe_core::Selection::default();
+    selected.add_rect_track(0, 600, 100, 110, 0, 0);
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    sel_rect.push_rect((0.0, 600.0, 100, 110), false);
+    let mut cursor_tick = None;
+    let mut note_drag_delta = None;
+    let mut note_resize_delta = None;
+    let mut selection_scale_delta = None;
+    let mut riff_repeat = None;
+
+    let mut frame = |raw| {
+        run_sel_frame_full(
+            &ctx,
+            raw,
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut selection_scale_delta,
+            &mut riff_repeat,
+            &mut sel_rect,
+            &std::collections::HashSet::new(),
+            Some(0),
+        )
+    };
+
+    // 选框 y=170..280；左缘 x=0，上拉 120px。
+    let press = egui::pos2(0.0, 225.0);
+    let drag = egui::pos2(0.0, 105.0);
+    let _ = frame(press_event(press));
+    let drag_out = frame(drag_event(drag));
+    assert!(
+        drag_out.ghost_count > 0 && drag_out.hidden_count > 0,
+        "拖动中应显示渐变 ghost 并隐藏原音符"
+    );
+    let out = frame(release_event(drag));
+
+    let (t0, t1, gamma) = out.warp.expect("上拉应提交时间渐变");
+    assert_eq!((t0, t1), (0.0, 600.0));
+    assert!((gamma - 0.5).abs() < 1e-4, "上拉 120px 应到 γ=0.5");
+    assert!(out.scale_delta.is_none(), "渐变不得走整体变速");
+    assert!(out.riff_repeat.is_none(), "渐变不得提交 Riff");
+    assert!(note_resize_delta.is_none(), "渐变不得走 Gate");
+    assert_eq!(sel_rect.rects, vec![(0.0, 600.0, 100, 110)], "选框范围不变");
+}
+
+/// 力度：下缘上拉 120px → +126，不改变选框。
+#[test]
+fn bottom_edge_vertical_drag_commits_velocity_delta() {
+    let ctx = egui::Context::default();
+    store_drag_mode(&ctx, SelectionDragMode::Gate);
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let midi = make_midi(vec![(100, 0, 120, 0, 100)]);
+    let mut selected = yinhe_core::Selection::default();
+    selected.add_rect_track(0, 480, 100, 110, 0, 0);
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    sel_rect.push_rect((0.0, 480.0, 100, 110), false);
+    let mut cursor_tick = None;
+    let mut note_drag_delta = None;
+    let mut note_resize_delta = None;
+    let mut selection_scale_delta = None;
+    let mut riff_repeat = None;
+
+    let mut frame = |raw| {
+        run_sel_frame_full(
+            &ctx,
+            raw,
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut selection_scale_delta,
+            &mut riff_repeat,
+            &mut sel_rect,
+            &std::collections::HashSet::new(),
+            Some(0),
+        )
+    };
+
+    // 选框下缘 y=280；在内侧 1px 按下，上拉 120px。
+    let press = egui::pos2(240.0, 279.0);
+    let drag = egui::pos2(240.0, 159.0);
+    let _ = frame(press_event(press));
+    let _ = frame(drag_event(drag));
+    let out = frame(release_event(drag));
+
+    assert_eq!(out.velocity_delta, Some(126), "上拉 120px 应 +126");
+    assert!(out.warp.is_none(), "力度拖动不得触发渐变");
+    assert!(out.scale_delta.is_none(), "力度拖动不得走整体变速");
+    assert_eq!(sel_rect.rects, vec![(0.0, 480.0, 100, 110)], "选框范围不变");
+}
+
+/// 4px 死区内松手：单击边缘不产生任何编辑。
+#[test]
+fn edge_deadzone_click_commits_nothing() {
+    let ctx = egui::Context::default();
+    store_drag_mode(&ctx, SelectionDragMode::Gate);
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let midi = make_midi(vec![(100, 0, 120, 0, 100)]);
+    let mut selected = yinhe_core::Selection::default();
+    selected.add_rect_track(0, 600, 100, 110, 0, 0);
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    sel_rect.push_rect((0.0, 600.0, 100, 110), false);
+    let mut cursor_tick = None;
+    let mut note_drag_delta = None;
+    let mut note_resize_delta = None;
+    let mut selection_scale_delta = None;
+    let mut riff_repeat = None;
+
+    let mut frame = |raw| {
+        run_sel_frame_full(
+            &ctx,
+            raw,
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut selection_scale_delta,
+            &mut riff_repeat,
+            &mut sel_rect,
+            &std::collections::HashSet::new(),
+            Some(0),
+        )
+    };
+
+    let press = egui::pos2(0.0, 225.0);
+    let jitter = egui::pos2(2.0, 222.0);
+    let _ = frame(press_event(press));
+    let _ = frame(drag_event(jitter));
+    let out = frame(release_event(jitter));
+
+    assert!(out.warp.is_none());
+    assert!(out.velocity_delta.is_none());
+    assert!(out.scale_delta.is_none());
+    assert!(out.riff_repeat.is_none());
+    assert!(note_resize_delta.is_none());
+}
+
+/// 回归：Riff 模式必须保留上下拖动平铺，不能被时间渐变吃掉。
+#[test]
+fn riff_mode_vertical_drag_still_tiles() {
+    let ctx = egui::Context::default();
+    store_drag_mode(&ctx, SelectionDragMode::Riff);
+    let mut view = test_view();
+    view.viewport_h = 600.0;
+    let midi = make_midi(vec![(100, 0, 120, 0, 100)]);
+    let mut selected = yinhe_core::Selection::default();
+    selected.add_rect_track(0, 480, 100, 110, 0, 0);
+    let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+    sel_rect.push_rect((0.0, 480.0, 100, 110), false);
+    let mut cursor_tick = None;
+    let mut note_drag_delta = None;
+    let mut note_resize_delta = None;
+    let mut selection_scale_delta = None;
+    let mut riff_repeat = None;
+
+    let mut frame = |raw| {
+        run_sel_frame_full(
+            &ctx,
+            raw,
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut selection_scale_delta,
+            &mut riff_repeat,
+            &mut sel_rect,
+            &std::collections::HashSet::new(),
+            Some(0),
+        )
+    };
+
+    // 右缘 x=480，纯垂直下拉：Riff 应只做 key 方向平铺。
+    let press = egui::pos2(480.0, 270.0);
+    let drag = egui::pos2(480.0, 299.0);
+    let _ = frame(press_event(press));
+    let _ = frame(drag_event(drag));
+    let out = frame(release_event(drag));
+
+    assert_eq!(out.riff_repeat, Some((0, -2)), "Riff 纵向平铺必须保留");
+    assert!(out.warp.is_none(), "Riff 模式不得触发时间渐变");
 }

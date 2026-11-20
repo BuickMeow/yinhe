@@ -4,6 +4,29 @@ use yinhe_editor_core::ResizeSide;
 
 use super::types::*;
 
+/// 轴锁定：第一次超过死区后决定本次手势方向。
+///
+/// `Main` = 沿时间轴（横向 PR 的 X / 纵向 PR 的 Y），沿用 Gate/Scale/Riff；
+/// `Cross` = 垂直时间轴（横向 PR 的 Y / 纵向 PR 的 X），做时间渐变或力度。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GestureAxis {
+    Main,
+    Cross,
+}
+
+/// 边缘手势跨帧状态。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct EdgeGestureState {
+    pub(crate) edge: crate::selection::drag::SelectionEdge,
+    pub(crate) t0: f64,
+    pub(crate) t1: f64,
+    pub(crate) k0: u8,
+    pub(crate) k1: u8,
+    pub(crate) press: egui::Pos2,
+    pub(crate) mode: crate::widgets::selection_actions::SelectionDragMode,
+    pub(crate) lock: Option<GestureAxis>,
+}
+
 /// sel_drag_frame 的帧内可变状态：5 个互斥拖拽状态机 + 帧输出。
 ///
 /// 曾全部内联在 sel_drag_frame 一个 800+ 行的函数里；拆分后各状态机
@@ -25,6 +48,8 @@ pub(crate) struct SelDragFrameState {
     pub(crate) sel_scale_state: Option<(f64, f64)>,
     /// 选区右下角 Riff：(t0, t1, k0, k1)。
     pub(crate) sel_riff_state: Option<(f64, f64, u8, u8)>,
+    /// 选框边缘的纵向手势：时间渐变 / 力度。
+    pub(crate) edge_gesture: Option<EdgeGestureState>,
     /// 单音符边缘伸缩：(side, track, start_tick, end_tick, key)。
     pub(crate) sel_note_resize: Option<SelNoteResize>,
     /// 单音符移动：(track, orig_start, orig_key, orig_end, press_tick, last_dk, alt)。
@@ -62,6 +87,7 @@ impl SelDragFrameState {
             || self.sel_resize_state.is_some()
             || self.sel_scale_state.is_some()
             || self.sel_riff_state.is_some()
+            || self.edge_gesture.is_some()
             || self.sel_note_resize.is_some()
             || self.sel_note_move.is_some()
     }
@@ -90,6 +116,9 @@ impl SelDragFrameState {
             sel_riff_state: ui
                 .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_riff_state")))
                 .unwrap_or(None),
+            edge_gesture: ui
+                .data_mut(|d| d.get_temp(ui.scope_id().with("sel_edge_gesture")))
+                .unwrap_or(None),
             sel_note_resize: ui
                 .data_mut(|d| d.get_persisted(ui.scope_id().with("sel_note_resize_state")))
                 .unwrap_or(None),
@@ -115,6 +144,7 @@ impl SelDragFrameState {
             sel_resize_state,
             sel_scale_state,
             sel_riff_state,
+            edge_gesture,
             sel_note_resize,
             sel_note_move,
             single_note_had_moved,
@@ -148,6 +178,7 @@ impl SelDragFrameState {
         ui.data_mut(|d| {
             d.insert_persisted(ui.scope_id().with("sel_riff_state"), sel_riff_state.take())
         });
+        ui.data_mut(|d| d.insert_temp(ui.scope_id().with("sel_edge_gesture"), *edge_gesture));
         ui.data_mut(|d| {
             d.insert_persisted(
                 ui.scope_id().with("sel_note_resize_state"),
@@ -196,6 +227,10 @@ impl SelDragFrameState {
         if self.sel_riff_state.is_some() && !pointer.primary_down() && !pointer.primary_released() {
             self.sel_riff_state = None;
             sel_rect.clear_preview_rects();
+        }
+        if self.edge_gesture.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+            self.edge_gesture = None;
+            self.drag_notes = None;
         }
         if self.sel_note_resize.is_some() && !pointer.primary_down() && !pointer.primary_released()
         {

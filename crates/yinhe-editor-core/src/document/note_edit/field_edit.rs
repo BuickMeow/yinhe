@@ -22,9 +22,20 @@ impl Document {
             return None;
         }
         match field {
-            NoteField::Velocity | NoteField::Gate => self.edit_note_props(field, ops),
+            NoteField::Velocity | NoteField::Gate => self.edit_note_props(field, ops, 0),
             NoteField::Key | NoteField::Tick => self.edit_note_positions(field, ops),
         }
+    }
+
+    /// 选框下缘拖动：对选中音符做相对力度加法，结果夹在 `1..=127`。
+    ///
+    /// 与 Info 面板共用 `edit_note_props`，但下限取 1，避免拖成力度 0
+    ///（MIDI 中 0 等同 note off，音符会变成哑音）。
+    pub fn adjust_selected_velocity(&mut self, delta: i16) -> Option<UndoAction> {
+        if delta == 0 || self.edit.selected.is_empty() {
+            return None;
+        }
+        self.edit_note_props(NoteField::Velocity, &[NumOp::Add(f64::from(delta))], 1)
     }
 
     /// Velocity/Gate：就地修改，不换桶。Gate 加减 uniform 时选框 te 跟随。
@@ -33,7 +44,12 @@ impl Document {
     /// `targets` 中间层——1.64 亿全选下那会多占 ~6GB）。选区先 clone 解开
     /// `self.edit` 与 `self.data.model` 的借用冲突（Selection clone 只深拷
     /// 少量 rects / 位图 BTreeMap，页 Arc 共享）。
-    fn edit_note_props(&mut self, field: NoteField, ops: &[NumOp]) -> Option<UndoAction> {
+    fn edit_note_props(
+        &mut self,
+        field: NoteField,
+        ops: &[NumOp],
+        velocity_min: u8,
+    ) -> Option<UndoAction> {
         let selection = self.edit.selected.clone();
         let model = Arc::make_mut(&mut self.data.model);
         let mut before: Vec<(yinhe_types::Note, u8)> = Vec::new();
@@ -67,7 +83,9 @@ impl Document {
                 |n| {
                     let new = match field {
                         NoteField::Velocity => {
-                            let v = apply_ops_round(ops, n.velocity as f64).clamp(0.0, 127.0) as u8;
+                            let v = apply_ops_round(ops, n.velocity as f64)
+                                .clamp(f64::from(velocity_min), 127.0)
+                                as u8;
                             yinhe_types::Note { velocity: v, ..*n }
                         }
                         NoteField::Gate => {

@@ -308,6 +308,39 @@ impl App {
         }
     }
 
+    /// 选框时间边纵向拖动：保持两端固定，按 `x^gamma` 重排内部音符。
+    pub(super) fn handle_selection_warp(&mut self, warp: Option<(f64, f64, f32)>) {
+        let Some((t0, t1, gamma)) = warp else {
+            return;
+        };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let before = doc.capture_snapshot();
+        if let Some(action) = doc.warp_selected_time(t0, t1, gamma) {
+            doc.edit.pianoroll_view.base.dirty = true;
+            doc.push_undo(action, t!("undo.rescale_span").as_ref(), before);
+            self.notify_notes_changed();
+        }
+    }
+
+    /// 选框下缘纵向拖动：选中音符力度统一加/减，结果夹到 1..=127。
+    pub(super) fn handle_selection_velocity_drag(&mut self, delta: Option<i16>) {
+        let Some(delta) = delta.filter(|&d| d != 0) else {
+            return;
+        };
+        let Some(idx) = self.workspace.active_doc else {
+            return;
+        };
+        let doc = &mut self.workspace.documents[idx];
+        let before = doc.capture_snapshot();
+        if let Some(action) = doc.adjust_selected_velocity(delta) {
+            doc.push_undo(action, t!("undo.edit_velocity").as_ref(), before);
+            self.notify_notes_changed();
+        }
+    }
+
     /// Handle Riff repeat (bottom-right square): extend by `(extent_ticks, sy)`.
     pub(super) fn handle_riff_repeat(&mut self, steps: Option<(i64, i64)>) {
         let Some((extent, extent_y)) = steps else {

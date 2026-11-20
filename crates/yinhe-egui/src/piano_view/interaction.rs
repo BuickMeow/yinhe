@@ -98,6 +98,8 @@ pub(crate) fn dispatch(
                 feedback.note_resize_delta,
                 feedback.selection_scale_delta,
                 feedback.riff_repeat,
+                feedback.selection_warp,
+                feedback.selection_velocity_delta,
                 sel_rect,
                 track_colors,
                 track_visible,
@@ -300,19 +302,29 @@ pub(crate) fn update_hover_cursor(
             hit_note = true;
         }
         if !hit_note {
-            let on_main_edge = eff_rects.len() == 1
-                && crate::selection::drag::selection_main_edge_hit(view, eff_rects[0], local, 6.0);
-            if on_main_edge {
-                use crate::widgets::selection_actions::{SelectionDragMode, load_drag_mode};
-                let icon = match load_drag_mode(ui.ctx()) {
-                    SelectionDragMode::Riff => egui::CursorIcon::ResizeNwSe,
-                    SelectionDragMode::Gate | SelectionDragMode::Scale => {
-                        if view.is_vertical() {
-                            egui::CursorIcon::ResizeVertical
-                        } else {
-                            egui::CursorIcon::ResizeHorizontal
-                        }
-                    }
+            use crate::selection::drag::SelectionEdge;
+            use crate::widgets::selection_actions::{SelectionDragMode, load_drag_mode};
+            let edge = (eff_rects.len() == 1)
+                .then(|| crate::selection::drag::selection_edge_hit(view, eff_rects[0], local, 6.0))
+                .flatten();
+            if let Some(edge) = edge {
+                let main_icon = if view.is_vertical() {
+                    egui::CursorIcon::ResizeVertical
+                } else {
+                    egui::CursorIcon::ResizeHorizontal
+                };
+                let cross_icon = if view.is_vertical() {
+                    egui::CursorIcon::ResizeHorizontal
+                } else {
+                    egui::CursorIcon::ResizeVertical
+                };
+                let icon = match edge {
+                    SelectionEdge::TimeEnd => match load_drag_mode(ui.ctx()) {
+                        SelectionDragMode::Riff => egui::CursorIcon::ResizeNwSe,
+                        SelectionDragMode::Gate | SelectionDragMode::Scale => main_icon,
+                    },
+                    // 时间起点只有纵向渐变；力度边只有副轴拖动。
+                    SelectionEdge::TimeStart | SelectionEdge::Velocity => cross_icon,
                 };
                 ui.ctx().set_cursor_icon(icon);
             } else {

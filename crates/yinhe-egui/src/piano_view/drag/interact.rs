@@ -82,6 +82,8 @@ pub(crate) fn handle_sel_marquee(
     note_resize_delta: &Option<(yinhe_editor_core::ResizeSide, i64)>,
     selection_scale_delta: &Option<u64>,
     riff_repeat: &Option<(i64, i64)>,
+    selection_warp: &Option<(f64, f64, f32)>,
+    selection_velocity_delta: &Option<i16>,
     pencil_note_drag: &Option<yinhe_types::PencilNoteDrag>,
     selected: &mut yinhe_core::Selection,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
@@ -103,6 +105,8 @@ pub(crate) fn handle_sel_marquee(
         || note_resize_delta.is_some()
         || selection_scale_delta.is_some()
         || riff_repeat.is_some()
+        || selection_warp.is_some()
+        || selection_velocity_delta.is_some()
         || pencil_note_drag.is_some();
     if can_marquee
         && let Some(result) = crate::piano_view::marquee::marquee_drag_frame(

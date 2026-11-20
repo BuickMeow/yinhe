@@ -173,3 +173,16 @@ fn apply_note_field_edit_gate_remembers_latest_tick() {
     assert!(doc.apply_note_field_edit(NoteField::Gate, &ops2).is_none());
     assert_eq!(doc.edit.default_gate(0, 120), 240);
 }
+
+#[test]
+fn adjust_selected_velocity_adds_relatively_and_clamps_to_one() {
+    let mut doc = make_doc_with_note(); // velocity 100
+    doc.adjust_selected_velocity(10).expect("应产生 undo");
+    assert_eq!(doc.data.model.notes[60][0].velocity, 110);
+
+    doc.adjust_selected_velocity(-126).expect("应产生 undo");
+    assert_eq!(
+        doc.data.model.notes[60][0].velocity, 1,
+        "下拉不得把力度拖成 0"
+    );
+}

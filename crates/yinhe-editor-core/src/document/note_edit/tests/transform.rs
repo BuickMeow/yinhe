@@ -182,3 +182,44 @@ fn flip_undo_restores_notes() {
     assert_eq!(n.start_tick, 100);
     assert_eq!(n.end_tick, 200);
 }
+
+#[test]
+fn warp_selection_keeps_endpoints_and_moves_inner_notes() {
+    let mut doc = make_doc_with_note(); // [100,200) k60
+    doc.repeat_selected_keys_extent(100, 200, 200, 60, 61, 0)
+        .expect("先造出 100/200/300 三个起点");
+    doc.edit.selected.clear_rects();
+    doc.edit.selected.add_rect_track(100, 400, 60, 60, 0, 0);
+    doc.edit.sel_rect.rects = vec![(100.0, 400.0, 60, 60)];
+
+    let starts_before: Vec<u32> = doc.data.model.notes[60]
+        .iter()
+        .map(|n| n.start_tick)
+        .collect();
+    let action = doc
+        .warp_selected_time(100.0, 400.0, 0.5)
+        .expect("上拉应产生渐变");
+    let starts_after: Vec<u32> = doc.data.model.notes[60]
+        .iter()
+        .map(|n| n.start_tick)
+        .collect();
+
+    assert_eq!(starts_before, vec![100, 200, 300]);
+    assert_eq!(starts_after[0], 100, "左端固定");
+    assert!(
+        starts_after[1] > 200 && starts_after[2] > starts_after[1],
+        "上拉后内部音符应右移且保持顺序: {starts_after:?}"
+    );
+    assert_eq!(
+        doc.edit.sel_rect.rects[0],
+        (100.0, 400.0, 60, 60),
+        "选框时间范围不随内部重排变化"
+    );
+    match action {
+        UndoAction::Notes(delta) => {
+            assert!(delta.before.len() >= 2);
+            assert!(delta.after.len() >= 2);
+        }
+        _ => panic!("expected Notes"),
+    }
+}

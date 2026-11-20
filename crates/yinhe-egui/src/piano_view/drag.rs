@@ -4,6 +4,7 @@
 
 #![allow(unused_imports)]
 
+mod edge_gesture;
 mod frame;
 mod free_quant;
 mod group_move;
@@ -17,6 +18,7 @@ mod single_resize;
 mod state;
 mod types;
 
+pub(crate) use edge_gesture::edge_gesture_frame;
 pub(crate) use frame::sel_drag_frame;
 pub(crate) use group_move::note_drag_frame;
 pub(crate) use group_resize::sel_resize_frame;

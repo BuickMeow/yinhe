@@ -147,6 +147,55 @@ impl Document {
         }))
     }
 
+    /// 选框时间渐变：保持 `[t0, t1]` 两端固定，按 `x^gamma` 重排内部音符。
+    ///
+    /// 上拉 gamma < 1（前疏后密），下拉 gamma > 1（前密后疏）。
+    /// 选框本身的时间范围不变；每个音符 start/end 都做同一映射，gate 至少 1 tick。
+    pub fn warp_selected_time(&mut self, t0: f64, t1: f64, gamma: f32) -> Option<UndoAction> {
+        if self.edit.selected.is_empty()
+            || t1 <= t0
+            || !t0.is_finite()
+            || !t1.is_finite()
+            || !gamma.is_finite()
+            || (gamma - 1.0).abs() < 1e-4
+        {
+            return None;
+        }
+        let model = Arc::make_mut(&mut self.data.model);
+        let originals = batch_ops::remove_selected(model, &self.edit.selected);
+        if originals.is_empty() {
+            return None;
+        }
+        let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+            std::collections::HashMap::new();
+        let mut changed = false;
+        for (note, key) in &originals {
+            let (new_start, new_end) =
+                crate::time_warp::warp_note(t0, t1, gamma, note.start_tick, note.end_tick);
+            if new_start != note.start_tick || new_end != note.end_tick {
+                changed = true;
+            }
+            new_by_key.entry(*key).or_default().push(yinhe_types::Note {
+                start_tick: new_start,
+                end_tick: new_end,
+                ..*note
+            });
+        }
+        if !changed {
+            batch_ops::insert_batch(model, new_by_key);
+            model.rebuild_dirty();
+            return None;
+        }
+        let after = batch_ops::flatten_by_key(&new_by_key);
+        batch_ops::insert_batch(model, new_by_key);
+        model.rebuild_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta {
+            before: originals,
+            after,
+        }))
+    }
+
     /// 翻转选中音符：水平（按 tick 镜像）或垂直（按 key 镜像）。
     ///
     /// 镜像范围 = 选框整体范围（min..max）；翻转后选框范围不变。

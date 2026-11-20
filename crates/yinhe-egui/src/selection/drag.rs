@@ -99,21 +99,6 @@ pub fn music_sel_to_pixel_rect(
     }
 }
 
-/// 指针是否命中选区的时间终点边缘（横向 = 右缘，纵向 = 顶端）。
-///
-/// 三联选择器选中 Gate/Scale/Riff 后，不再画三个方块控制点；右缘就是
-/// 统一的拖动入口。`local` 与 `music_sel_to_pixel_rect` 同为 content-local。
-pub fn selection_main_edge_hit(
-    view: &PianoRollView,
-    rect: (f64, f64, u8, u8),
-    local: egui::Pos2,
-    threshold: f32,
-) -> bool {
-    let (t0, t1, k0, k1) = rect;
-    let pixel = music_sel_to_pixel_rect(view, t0, t1, k0, k1);
-    rect_main_edge_hit(pixel, local, view.is_vertical(), threshold)
-}
-
 /// 像素矩形的“时间终点边”命中：横向为右缘，纵向为顶缘。
 ///
 /// PR 与 AR 共用；AR 的时间轴恒为横向，直接传 `vertical = false`。
@@ -132,6 +117,91 @@ pub fn rect_main_edge_hit(
             && local.y >= rect.min.y - threshold
             && local.y <= rect.max.y + threshold
     }
+}
+
+/// 选框边缘的可拖动区域。
+///
+/// 时间渐变放在时间轴两端（`TimeStart`/`TimeEnd`），力度放在副轴下缘
+/// （横向 = 底边，纵向 = 右边）；上缘/左边留空，避免抢未来的键区操作。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionEdge {
+    TimeStart,
+    TimeEnd,
+    Velocity,
+}
+
+/// 选框下缘力度热区离左右角的最小距离，避免和左右缘渐变抢手势。
+pub const SEL_VELOCITY_CORNER_PX: f32 = 12.0;
+/// 力度边命中带比时间边窄：单行选框只有 10px 高，热区太宽会吃掉选框内拖动。
+pub const SEL_VELOCITY_EDGE_PX: f32 = 4.0;
+
+/// 命中选框边缘；`local` 与 `music_sel_to_pixel_rect` 同为 content-local。
+///
+/// 优先级：时间终点 → 时间起点 → 力度。左右/上下角由时间边缘先吃掉，
+/// 力度边只取中间段。
+pub fn selection_edge_hit(
+    view: &PianoRollView,
+    rect: (f64, f64, u8, u8),
+    local: egui::Pos2,
+    threshold: f32,
+) -> Option<SelectionEdge> {
+    let (t0, t1, k0, k1) = rect;
+    let pixel = music_sel_to_pixel_rect(view, t0, t1, k0, k1);
+    rect_edge_hit(
+        pixel,
+        local,
+        view.is_vertical(),
+        threshold,
+        SEL_VELOCITY_EDGE_PX,
+        SEL_VELOCITY_CORNER_PX,
+    )
+}
+
+/// 像素矩形的边缘命中；PR 与 AR 可共用。
+///
+/// `vertical` 指时间轴方向：横向时时间边是左右缘、力度边是下缘；
+/// 纵向时时间边是上下缘、力度边是右缘。
+pub fn rect_edge_hit(
+    rect: egui::Rect,
+    local: egui::Pos2,
+    vertical: bool,
+    threshold: f32,
+    velocity_threshold: f32,
+    velocity_corner: f32,
+) -> Option<SelectionEdge> {
+    let in_x = local.x >= rect.min.x - threshold && local.x <= rect.max.x + threshold;
+    let in_y = local.y >= rect.min.y - threshold && local.y <= rect.max.y + threshold;
+    if vertical {
+        // 纵向：tick 0 在底部，时间终点在顶缘。
+        if (local.y - rect.min.y).abs() <= threshold && in_x {
+            return Some(SelectionEdge::TimeEnd);
+        }
+        if (local.y - rect.max.y).abs() <= threshold && in_x {
+            return Some(SelectionEdge::TimeStart);
+        }
+        let corner = velocity_corner.min((rect.height() * 0.5 - 1.0).max(0.0));
+        if (local.x - rect.max.x).abs() <= velocity_threshold
+            && local.y >= rect.min.y + corner
+            && local.y <= rect.max.y - corner
+        {
+            return Some(SelectionEdge::Velocity);
+        }
+    } else {
+        if (local.x - rect.max.x).abs() <= threshold && in_y {
+            return Some(SelectionEdge::TimeEnd);
+        }
+        if (local.x - rect.min.x).abs() <= threshold && in_y {
+            return Some(SelectionEdge::TimeStart);
+        }
+        let corner = velocity_corner.min((rect.width() * 0.5 - 1.0).max(0.0));
+        if (local.y - rect.max.y).abs() <= velocity_threshold
+            && local.x >= rect.min.x + corner
+            && local.x <= rect.max.x - corner
+        {
+            return Some(SelectionEdge::Velocity);
+        }
+    }
+    None
 }
 
 /// 预计算选中音符信息（move 和 resize 共用）。
@@ -384,6 +454,31 @@ mod tests {
         // 纵向：时间终点在顶缘。
         assert!(rect_main_edge_hit(r, egui::pos2(150.0, 47.0), true, 3.0));
         assert!(!rect_main_edge_hit(r, egui::pos2(150.0, 60.0), true, 3.0));
+    }
+
+    #[test]
+    fn rect_edge_hit_separates_time_and_velocity_zones() {
+        let r = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(200.0, 150.0));
+        let hit = |x, y| rect_edge_hit(r, egui::pos2(x, y), false, 6.0, 4.0, 12.0);
+        assert_eq!(hit(203.0, 100.0), Some(SelectionEdge::TimeEnd));
+        assert_eq!(hit(97.0, 100.0), Some(SelectionEdge::TimeStart));
+        assert_eq!(hit(150.0, 153.0), Some(SelectionEdge::Velocity));
+        // 左右下角归时间边缘，力度边给中间段。
+        assert_eq!(hit(197.0, 153.0), Some(SelectionEdge::TimeEnd));
+        assert_eq!(hit(103.0, 153.0), Some(SelectionEdge::TimeStart));
+        // 上缘留空。
+        assert_eq!(hit(150.0, 47.0), None);
+        // 选框内部不是边缘。
+        assert_eq!(hit(150.0, 100.0), None);
+    }
+
+    #[test]
+    fn rect_edge_hit_rotates_with_vertical_time_axis() {
+        let r = egui::Rect::from_min_max(egui::pos2(50.0, 100.0), egui::pos2(150.0, 200.0));
+        let hit = |x, y| rect_edge_hit(r, egui::pos2(x, y), true, 6.0, 4.0, 12.0);
+        assert_eq!(hit(100.0, 97.0), Some(SelectionEdge::TimeEnd));
+        assert_eq!(hit(100.0, 203.0), Some(SelectionEdge::TimeStart));
+        assert_eq!(hit(153.0, 150.0), Some(SelectionEdge::Velocity));
     }
 
     /// 回归：41..=60 的选框必须覆盖 41 和 60 两整行。

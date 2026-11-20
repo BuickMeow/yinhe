@@ -7,6 +7,7 @@ use yinhe_editor_core::audio_settings::QuickDeleteMode;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::TimeSigEvent;
 
+use super::edge_gesture::edge_gesture_frame;
 use super::group_move::note_drag_frame;
 use super::group_resize::sel_resize_frame;
 use super::group_scale::{sel_riff_frame, sel_scale_frame};
@@ -35,6 +36,8 @@ pub(crate) fn sel_drag_frame(
     note_resize_delta: &mut Option<(ResizeSide, i64)>,
     selection_scale_delta: &mut Option<u64>,
     riff_repeat: &mut Option<(i64, i64)>,
+    selection_warp: &mut Option<(f64, f64, f32)>,
+    selection_velocity_delta: &mut Option<i16>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     _track_colors: &[[f32; 4]],
     track_visible: &[bool],
@@ -92,6 +95,17 @@ pub(crate) fn sel_drag_frame(
         additive,
         &pointer,
         can_edit,
+    );
+    edge_gesture_frame(
+        ui,
+        &mut state,
+        view,
+        content_rect,
+        music_rect,
+        sel_rect,
+        selection_warp,
+        selection_velocity_delta,
+        &pointer,
     );
     note_drag_frame(
         ui,
@@ -215,6 +229,8 @@ pub(crate) fn sel_drag_frame(
         note_resize_delta,
         selection_scale_delta,
         riff_repeat,
+        selection_warp,
+        selection_velocity_delta,
         &pencil_note_drag,
         selected,
         sel_rect,

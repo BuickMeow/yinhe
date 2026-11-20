@@ -7,9 +7,9 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::TimeSigEvent;
 
 use super::hit::hit_test_note;
-use super::state::SelDragFrameState;
+use super::state::{EdgeGestureState, SelDragFrameState};
 use crate::selection::drag::{
-    collect_selected_notes, main_cross_x_y, main_px_to_tick_dir, selection_main_edge_hit,
+    SelectionEdge, collect_selected_notes, main_cross_x_y, main_px_to_tick_dir, selection_edge_hit,
 };
 use crate::widgets::selection_actions::{SelectionDragMode, load_drag_mode};
 
@@ -120,25 +120,28 @@ pub(crate) fn sel_press(
                 }
             }
 
-            // ── 选框时间终点边缘：按三联选择器当前模式拖动 ──
-            // 控制点已删除；右缘（纵向为顶端）是统一入口。
+            // ── 选框边缘：时间起点/终点纵向渐变，下缘纵向批量力度 ──
+            // 时间终点边横向仍按选择器走 Gate/Scale/Riff；Riff 本身要用
+            // 上下拖动平铺，因此 Riff 模式不参与纵向渐变，按下即进入 Riff。
             // 已命中音符（伸缩/移动）时跳过——单音符操作优先于选框整体操作。
-            let edge_mode = if state.sel_note_resize.is_none()
+            let edge_hit = if state.sel_note_resize.is_none()
                 && state.sel_note_move.is_none()
                 && eff_rects.len() == 1
-                && selection_main_edge_hit(view, eff_rects[0], local, 6.0)
             {
-                Some(load_drag_mode(ui.ctx()))
+                selection_edge_hit(view, eff_rects[0], local, 6.0)
             } else {
                 None
             };
 
-            if let Some(mode) = edge_mode {
+            if let Some(edge) = edge_hit {
                 let (t0, t1, k0, k1) = eff_rects[0];
-                match mode {
-                    SelectionDragMode::Gate => {
-                        state.sel_resize_state = Some((ResizeSide::Right, t1, t0));
-                        sel_rect.start_resize(ResizeSide::Right);
+                let mode = load_drag_mode(ui.ctx());
+                if edge == SelectionEdge::TimeEnd && mode == SelectionDragMode::Riff {
+                    // Riff 的纵向拖动是平铺，不参与渐变轴锁定。
+                    state.sel_riff_state = Some((t0, t1, k0, k1));
+                    state.drag_notes = None;
+                } else {
+                    if matches!(edge, SelectionEdge::TimeStart | SelectionEdge::TimeEnd) {
                         state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
                             selected,
                             midi,
@@ -146,21 +149,19 @@ pub(crate) fn sel_press(
                             track_selected,
                             track_locked,
                         )));
+                    } else {
+                        state.drag_notes = None;
                     }
-                    SelectionDragMode::Scale => {
-                        state.sel_scale_state = Some((t0, t1));
-                        sel_rect.start_resize(ResizeSide::Right);
-                        state.drag_notes = Some(std::sync::Arc::new(collect_selected_notes(
-                            selected,
-                            midi,
-                            track_visible,
-                            track_selected,
-                            track_locked,
-                        )));
-                    }
-                    SelectionDragMode::Riff => {
-                        state.sel_riff_state = Some((t0, t1, k0, k1));
-                    }
+                    state.edge_gesture = Some(EdgeGestureState {
+                        edge,
+                        t0,
+                        t1,
+                        k0,
+                        k1,
+                        press: pos,
+                        mode,
+                        lock: None,
+                    });
                 }
             } else if state.sel_note_resize.is_none() && state.sel_note_move.is_none() {
                 if in_sel_rect {

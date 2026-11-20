@@ -243,6 +243,8 @@ impl App {
             note_resize_delta,
             selection_scale_delta,
             riff_repeat,
+            selection_warp,
+            selection_velocity_delta,
             preview_reqs,
         ) = {
             let mut guard =
@@ -260,6 +262,8 @@ impl App {
             let mut note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)> = None;
             let mut selection_scale_delta: Option<u64> = None;
             let mut riff_repeat: Option<(i64, i64)> = None;
+            let mut selection_warp: Option<(f64, f64, f32)> = None;
+            let mut selection_velocity_delta: Option<i16> = None;
             let mut preview_reqs: Vec<crate::piano_view::PreviewReq> = Vec::new();
             // 顶部工具栏（需要文档视图状态：键数 / Scale / 调式选择）。
             let key_sig = crate::widgets::timecode::current_key_sig(doc);
@@ -444,6 +448,8 @@ impl App {
                     note_resize_delta: &mut note_resize_delta,
                     selection_scale_delta: &mut selection_scale_delta,
                     riff_repeat: &mut riff_repeat,
+                    selection_warp: &mut selection_warp,
+                    selection_velocity_delta: &mut selection_velocity_delta,
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
                 };
@@ -518,6 +524,8 @@ impl App {
                 note_resize_delta,
                 selection_scale_delta,
                 riff_repeat,
+                selection_warp,
+                selection_velocity_delta,
                 preview_reqs,
             )
         };
@@ -652,6 +660,10 @@ impl App {
         // Handle selection overall time stretch / Riff repeat.
         self.handle_selection_scale(selection_scale_delta);
         self.handle_riff_repeat(riff_repeat);
+
+        // Handle time warp / batch velocity from selection edges.
+        self.handle_selection_warp(selection_warp);
+        self.handle_selection_velocity_drag(selection_velocity_delta);
 
         // Handle pencil note drag
         self.handle_pencil_note_drag(pencil_note_drag);
