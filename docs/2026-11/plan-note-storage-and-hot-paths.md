@@ -15,6 +15,7 @@
 > 4. **先做 bench，再开始修**。M0 是硬门禁，bench 结果评审后才进 M1。见第 5 节。
 > 5. **不是所有措施都双端有效**：模型/热路径/批量/undo/save 是双端共享；GPU cull 的 8 档摘要和全量重建是桌面端专用；移动端另有 `NoteLayerCache` 常驻桶、`LayerSlot` 高水位等问题。见 3.9。
 > 6. **M0 基准已完成**（Apple M5 / release）：10M 单 key 完整铅笔路径约 81~91 ms/帧，`rebuild_dirty` 占 85%；优化后原型（bench 内，非生产）改 end 2.7µs、左拉伸 43.4µs、删除 14.9µs；列式 undo delta 7.87B/音符，10M 解码 58.1ms。见第 5 节。
+> 7. **“待测”项已测一部分**：40M 工程 8 档摘要合计 49MB（原始层 616MB）；10M 桶 `insert_batch_sorted` 峰值 154.2→309.0MB（2.00×）；5M/256 key 滚完 `NoteLayerCache` 额外 +99.6MB。start.mid、LayerSlot、真机 RSS 未测。见 5 节。
 
 1. **保留 `start_tick + end_tick`，`Note` 维持 16B。** 换成「起点+长度」内存完全一样，性能差异被内存带宽淹没；现有 `max_ends`、`range_including_long`、GPU `NoteInstance` 都以 end 为中心，改 gate 只增加溢出和 `gate = 0` 两个边界。
 2. **P0 是第 4 节的单音符热路径**：按 id 线性扫整桶、每次 `update_note_by_id` 无条件 `sort()`、单点删除后全桶重算 `max_ends`、单点编辑后 `rebuild_dirty()` 重扫整桶。这是 1 亿音符下真正会卡手的地方，优先级高于省 4B/音符。该层在 `yinhe-types` / `yinhe-core`，桌面和移动端同时受益。
@@ -78,6 +79,7 @@ Note（模型唯一权威存储，256 个 key 桶，16B：id + start + end + vel
 - **`Note` 不存 key**：`YinModel.notes` 是 `Box<[Arc<NoteBucket>; KEY_COUNT]>`，桶号就是 key。存一份 key 会多 1B，而且任何跨 key 移动都要同时改桶和字段。
 - **`NoteEvent` 不存 track**：导入时每个 `TrackData` 持有一个 `Vec<NoteEvent>`，track 由外层决定。这是导入期临时结构，省 2B/音符。
 - **`NoteInstance` 同时存 key 和 track**：GPU 的 `all_notes` 是 per-key 连续 buffer，但顶点着色器要知道 key 算 y、track 算颜色/显隐；`packed` 一个 u32 装下 key(9) + track(16) + vel(7)。这是整个仓库里最紧凑的运行时表示。
+- **GPU 原始层的 visible 层是 u32 索引，不是 NoteInstance 副本**：`per_key_visible_buffers` 每槽 4B，存「该 key 的 `all_instances` 内的本地索引」；`cull.wgsl` 的可见线程把 `index` 写到该 chunk 的稀疏槽 `[chunk*256, chunk*256+256)`，顶点着色器 `vs_main_note(@location(0) idx: u32)` 再用 `all_instances[idx]` 取完整 12B 实例。u16 只能覆盖 65535 个/key，黑乐谱不够；u32 覆盖每 key 42.9 亿，正好和总量上限一致。
 - **GPU 的 tick 实际是 31 位**：`NoteInstance` 把 `start_tick` / `end_tick` 的 bit31 分别借给选中标记和 ghost 标记（`SELECTED_BIT` / `GHOST_BIT`，`TICK_MASK = 0x7FFF_FFFF`）。模型层是 u32，但渲染层超过 2^31 tick 会与标记位冲突；480 PPQ、120 BPM 下 2^31 tick 仍有约 26 天，实际不是瓶颈，但做超长曲目时要记住这条边界。
 - **`DominoNote` 不存 track**：Domino 剪贴板是 `tracks: Vec<Vec<DominoNote>>`，track 是外层下标；格式本身也没有 id。
 - **`NoteSummary` 同时存 key 和 track**：摘要段按 `(key, block, track)` 聚合，key 不再有桶可隐含，必须显式存。
@@ -143,10 +145,10 @@ track     2
 | CPU 模型 | `Note` | 16B/音符 | 1.60GB | 2.62GB | 常驻 | 不动 |
 | GPU 原始层 all_notes | `NoteInstance` | 12B/音符 | 1.20GB | 1.97GB | 常驻 | 不动 |
 | GPU 原始层 visible 索引 | `u32` 索引 | 4B/槽，按 256 向上取整 | 0.40GB | 0.66GB | 常驻 | 不动 |
-| GPU LOD 摘要层 | `NoteInstance` + 索引 | 12B/段 + 4B/槽 | 待测 | 待测 | 常驻 | S3-2 |
+| GPU LOD 摘要层 | `NoteInstance` + 索引 | 12B/段 + 4B/槽 | 实测 40M: 49MB；外推 ~120~180MB | 外推 ~200~300MB | 常驻 | S3-2 |
 | 全量重建的 raw 缓冲 | `Vec<NoteInstance>` | 12B/音符 | 1.20GB | 1.97GB | 瞬时 | S3-3 |
-| 全量重建的摘要缓冲 | 8 档 `Vec<NoteInstance>` | 12B × Σ段 | 待测 | 待测 | 瞬时 | S3-3 |
-| UI 可见窗口 | per-key + flat + 窗口外桶 | 12B × 窗口段数 × 2 + 窗口外残留 | 随窗口 | 随窗口 | 常驻 | 3.7 / 3.9 |
+| 全量重建的摘要缓冲 | 8 档 `Vec<NoteInstance>` | 12B × Σ段 | 实测 40M: 36MB；外推 ~90~140MB | 外推 ~150~230MB | 瞬时 | S3-3 |
+| UI 可见窗口 | per-key + flat + 窗口外桶 | 12B × 窗口段数 × 2 + 窗口外残留 | 实测 5M/256 key: +99.6MB | 随窗口 | 常驻 | 3.7 / 3.9 |
 | `insert_batch_sorted` | 旧块 + 新块 | ≈ 2× 桶 | 按桶 | 按桶 | 瞬时 | S3-4 |
 | `iter_mut` / PPQ 缩放 | 所有块深拷贝 | ≈ 2× 模型 | 3.2GB | 5.24GB | 瞬时 | 3.7 |
 | 单点 start 修改触发 `sort()` | 旧块 + flat + 新块 | ≈ 3× 桶 | 按桶 | 按桶 | 瞬时 | 由 P0 消除 |
@@ -188,6 +190,18 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 
 **硬约束（已定）：8 档全部常驻，不做「首次进入某档再准备」。** 缩放是高频操作，切档卡一帧不可接受；因此不做按需上传、不做逐档淘汰，也不在缩放时后台构建。下面只优化「构建/上传过程」和「常驻结构本身」，不动常驻策略。
 
+实测（`memory_probe summary`，8 档合计，含 all + visible + args）：
+
+| 工程 | 音符 | 轨数 | 8 档合计 | 原始层 | 摘要/原始 |
+|---|---:|---:|---:|---:|---:|
+| A[BlackMidi] Wooden | 160k | 17 | 8.9MB | 2.5MB | 356% |
+| Ouranos | 24.3M | 136 | 73.5MB | 375MB | 20% |
+| ReptilianDarkRitual | 40.0M | 132 | 49.0MB | 616MB | 8% |
+
+结论：**音符越密，摘要相对原始层越小**。40M 的 8 档摘要只有 49MB，远小于原始层 616MB；8 档常驻是合理的，不需要为了省显存去动常驻策略。160k 的小工程摘要反而比原始层大，但绝对值只有 9MB，无所谓。
+
+start.mid（1.64 亿 / 799 轨）还没测：本地 `start.yin` 是 v2/v5 旧版本，当前代码读不了；直接解析 1.2GB `start.mid` 预计超过 120 秒限制，需要你批准长时间测试。按 40M 数据外推，8 档摘要大约 200~300MB，仍远小于原始层 2.6GB。
+
 先做低风险开关，再测量：
 
 1. **先修一个已确认的浪费（低风险，桌面端）**：桌面 LOD 开关关闭时，`upload_all_with_summaries` / `start_rebuild` / `upload_key_with_summaries` 仍然会构建并上传 8 档摘要，`lod_enabled` 只影响渲染时选不选摘要层。把该开关传进这三条路径，关闭 LOD 时直接跳过摘要构建/上传。这是纯省内存，不改变默认行为。移动端固定 `lod_enabled: true`，不受这条影响。
@@ -210,7 +224,7 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 - `BuildResult` 同时持有 `summaries: Vec<(Vec<NoteInstance>, offsets)>`，8 档全在；
 - UI 线程按每帧 4 个 key 上传，上传完成前整份载荷都活着。
 
-`build_all_notes` 已经做过一次优化（去掉 per-key 中间 Vec，峰值从约 5GB 降到一份最终缓冲），不要回退。剩余峰值来自「raw + 8 档摘要同时存在」。
+`build_all_notes` 已经做过一次优化（去掉 per-key 中间 Vec，峰值从约 5GB 降到一份最终缓冲），不要回退。剩余峰值主要来自 raw 的 12B/音符；8 档摘要的实测值只有 36~54MB（24M/40M 工程），不是大头。
 
 分两步，**都保持 8 档全量常驻**：
 
@@ -236,7 +250,7 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 
 注意：`Arc<Vec<Note>>` 如果还被音频线程持有，旧块不会真的释放，这时峰值仍是 2×；这是 COW 的固有代价，文档里写清楚，不做额外优化。
 
-验证：新增 bench，在 1M 音符/key 的桶里批量插入 10 万音符，用 memtrace 记录峰值；对比改前/改后。功能测试复用现有 `insert_batch_merges_across_chunks`。
+验证：已用 `yinhe-tests/examples/memory_probe.rs batch 10000000` 实测：10M 桶 + 10 万插入，base 154.2MB → peak 309.0MB，正好 2.00×。流式归并后复跑同一命令，目标降到 ~1× + 单块临时。功能测试复用现有 `insert_batch_merges_across_chunks`。
 
 ### 3.6 S3-5：undo `NoteDelta` 的整份副本（P2，bench 决定是否升 P1）
 
@@ -311,9 +325,10 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 移动端 / CPU 渲染路径需要重点看的两个高水位问题：
 
 - **`NoteLayerCache` 的窗口外 per-key 桶不会释放**（`crates/yinhe-wgpu/src/note_cache.rs`）：`buckets: [Option<KeyBucket>; KEY_COUNT]` 只在当前 `key_lo..=key_hi` 范围内更新，窗口外的 key 保留上一次的 `Vec<NoteInstance>`。垂直滚动浏览所有 key 后，最多 256 个桶都会留着各自的窗口实例；换文档才整体重置。这是移动端（和桌面 CPU fallback）最可能累积的 UI 内存，不是「2× 当前窗口」那么小。
-  - 先测量：在 start.mid 上高倍率垂直滚完 256 个 key，记录 `NoteLayerCache` 占用的 RSS。
-  - 如果确实大，再做「只保留当前 key 窗口 + 少量预取」或「窗口外桶按 LRU/容量释放」。这是渲染缓存策略，需要你拍板是否接受重新进入某个 key 时重建。
-- **`LayerSlot` 的单个 buffer chunk / CPU scratch 只涨不缩**（`crates/yinhe-wgpu/src/layer.rs`）：`BufferChunk::ensure_capacity` 扩容后不回收，`scratch.clear()` 保留容量（超过 `MAX_PER_CHUNK` 的额外 chunk 会回收，但单块容量不会）。一次大窗口（或一次全曲 zoom-out）后，这一层会一直占着峰值容量，直到 renderer 重建。移动端 4~6GB 值得加一个「长期小于容量 1/4 时缩容」或「失焦/切文档时释放」的策略；先测量峰值，再决定是否做。
+  - 实测（`memory_probe cache`，5M 音符 / 256 key / 所有音符在 3000 tick 内，ppu=0.3 原始层）：滚完 256 个 key 后常驻额外 **99.6MB**；同时最终 flat 只有 39k 实例（约 0.4MB）。窗口外的桶是实打实的 99.6MB，10M 音符会接近 200MB。
+  - 这已经证明需要处理；下一步是决定「只保留当前 key 窗口 + 少量预取」还是「窗口外桶按容量/LRU 释放」。
+- **`LayerSlot` 的单个 buffer chunk / CPU scratch 只涨不缩**（`crates/yinhe-wgpu/src/layer.rs`）：`BufferChunk::ensure_capacity` 扩容后不回收，`scratch.clear()` 保留容量（超过 `MAX_PER_CHUNK` 的额外 chunk 会回收，但单块容量不会）。一次大窗口（或一次全曲 zoom-out）后，这一层会一直占着峰值容量，直到 renderer 重建。移动端 4~6GB 值得加一个「长期小于容量 1/4 时缩容」或「失焦/切文档时释放」的策略。
+  - 这一项没有直接测：需要 wgpu 设备创建 `InstanceRenderer` 并读取 buffer 容量，或加一个模块内测试。代码逻辑已经确认「只涨不缩」，但实际峰值取决于窗口，需要 headless GPU 测试。
 
 这两项都不在音符模型层，但对移动端内存的实际影响可能比 GPU 摘要 8 档更大。
 
@@ -354,6 +369,29 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 - 1 亿音符模型 1.6GB，加上系统、音频、GPU 缓冲和 undo，6GB 设备可以跑，4GB 设备已经很紧。
 - 1.64 亿音符模型 2.62GB，4GB 设备基本不可行，6GB 也要看音频/贴图占用。
 - 所以移动端真正值得先做的是：P0（CPU 不卡，间接省内存峰值）、undo 压缩（bench 后）、保存峰值、`NoteLayerCache` 桶释放、`LayerSlot` 缩容；GPU 摘要 8 档那套是桌面专项，移动端不用投入。
+
+---
+
+### 3.10 计数类型统一为 u32（note_count 等）
+
+`note_count: u64` 会误导：总量硬顶是 u32，u64 既没有容量意义，又让 `as usize` / `as f32` / 进度计算到处混用。建议在 M2 和 id guard 一起改：
+
+| 字段 | 现在 | 建议 |
+|---|---|---|
+| `YinModel.note_count` | `u64` | `u32` |
+| `YinModel.track_note_count` | `Vec<u64>` | `Vec<u32>` |
+| `YinModel.track_audible_count` | `Vec<u64>` | `Vec<u32>` |
+| `YinModel.bucket_note_count` | `[u64; 256]` | `[u32; 256]` |
+| `SelectedNoteSummary.count` | `u64` | `u32` |
+| `NoteLoader.note_count` | `u64` | `u32`（累加用 checked/saturating） |
+| 进度/UI 的 `done/total` | `u64` | 可保留 `u64` 做 `f32` 比例，源数据用 u32 |
+
+注意：
+
+- `rebuild_dirty` 里的增量目前用 `i64` 中间量；改成 u32 后保留 `i64` 中间量，最后 `u32::try_from` 或 `checked_add_signed`，不要直接 `as u32` 截断。
+- `.yin` 的 `TrackSegment.count` 已经是 u32，两边正好对齐；MIDI writer 的 `Vec<u32>` 索引也不用再假设 u64 总量。
+- `midi_import` / 进度回调里大量 `u64` 只是中间统计，可以保留 u64，最后落模型时检查 ≤ u32。
+- 这是一次机械但面广的 API 变更，和 id guard 一起做，避免两次改同一批结构。
 
 ---
 
@@ -594,13 +632,13 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 
 ### M0 bench / 测量清单
 
-1. **单音符热路径**（1M / 10M 音符/key）：改 end、改 velocity、删除、移动、左拉伸；`*_by_id` vs `*_at` 各跑一遍，记录 µs/op 和峰值内存。
-2. **批量操作**：`insert_batch_sorted` 往 1M 桶插入 10 万；`delete_notes` k=1/100/1000；`move_clip` k=1万/10万。
-3. **undo delta**：1M / 10M / 100M，对比 `Vec<(Note,u8)>`、列式 delta、列式+zstd；记录编码/解码耗时和字节数。这是 3.6 的决策依据。
-4. **内存快照**：加载完成、首帧上传完成、全量重建完成三个点，桌面 + 移动端各一份；100M 合成工程必测，start.mid 视 120 秒限制决定是否申请长时间测试。
-5. **GPU 摘要段数**：桌面端 8 档各多少段、多少字节；确认是否值得继续优化。
-6. **移动端 `NoteLayerCache` 桶增长**：高倍率垂直滚完 256 个 key，记录 RSS；确认窗口外桶是否是大头。
-7. **移动端 `LayerSlot` 高水位**：全曲 zoom-out 再 zoom-in，记录 GPU/CPU 容量是否回落。
+1. **单音符热路径**（1M / 10M 音符/key）：改 end、改 velocity、删除、移动、左拉伸；`*_by_id` vs `*_at` 各跑一遍，记录 µs/op 和峰值内存。✅ 已完成（note_hotpath_bench）。
+2. **批量操作**：`insert_batch_sorted` 往 1M 桶插入 10 万；`delete_notes` k=1/100/1000；`move_clip` k=1万/10万。✅ 批量插入已测（1M/10M + 峰值）；`delete_notes`/`move_clip` 的 k 规模未单独测，底层 remove 成本已覆盖。
+3. **undo delta**：1M / 10M / 100M，对比 `Vec<(Note,u8)>`、列式 delta、列式+zstd；记录编码/解码耗时和字节数。✅ 1M/10M 已测；100M 未测（需要大内存/长时间测试）。
+4. **内存快照**：加载完成、首帧上传完成、全量重建完成三个点，桌面 + 移动端各一份；100M 合成工程必测，start.mid 视 120 秒限制决定是否申请长时间测试。⚠️ 只测了 CPU 侧 summary/batch/cache；首帧 GPU 上传、移动端真机 RSS、start.mid 未测。
+5. **GPU 摘要段数**：桌面端 8 档各多少段、多少字节；确认是否值得继续优化。✅ 已测 160k/24M/40M 三个工程；start.mid 待长测试。
+6. **移动端 `NoteLayerCache` 桶增长**：高倍率垂直滚完 256 个 key，记录 RSS；确认窗口外桶是否是大头。✅ 已用共享 CPU 路径实测（5M/256 key，+99.6MB）；真机 RSS 未测。
+7. **移动端 `LayerSlot` 高水位**：全曲 zoom-out 再 zoom-in，记录 GPU/CPU 容量是否回落。❌ 未测：需要 headless wgpu 设备或真机；代码逻辑已确认只涨不缩。
 
 1~3 用于决定 P0 和 undo 是否值得做；4~7 用于决定桌面/移动端内存优化的优先级。只有数字能支撑「修完真的更快、更省」时，才进 M1。
 
@@ -632,7 +670,7 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 1. **10M 单 key 的真实铅笔路径约 81~91 ms/帧**，目标是 ≤100µs，差约 1000 倍。即使只修 id 查找和 sort，纯写原语仍有 5~11 ms，必须同时把 `rebuild_dirty` 的全桶 stats 扫描改成增量。
 2. **`rebuild_dirty` 是主要成本**：10M 下一次约 77~80 ms，占完整路径的 85% 左右。它按脏 key 重扫整个桶重建 `bucket_track_stats`，与「改一个音符」不匹配。这是 P0 必须一起修的原因。原型里增量统计包含在 2.7µs 的 `改 end` 里（locate + 单块写 + stats + max_end），**不需要再单独做 stats bench**。
 3. **左拉伸（start 改变）10M 约 169 ms**：92 ms 全桶 sort + 77 ms stats。当前 `sort()` 会做 flat 全量拷贝 + 排序 + 重建块，单帧内存峰值约 3× 桶（480MB），必须改成单音符重定位。
-4. **批量插入时间可接受，但峰值内存未测**：10M 桶插 10 万音符 35.5 ms；`insert_batch_sorted` 的 2× 峰值仍需单独用 memtrace 验证。
+4. **批量插入时间可接受，2× 峰值已实测**：10M 桶插 10 万音符 35.5 ms；`memory_probe batch 10000000` 显示 base 154.2MB → peak 309.0MB，正好 2.00×（1M 是 16.9→34.5MB）。流式归并后预计降到约 1× + 单块临时。
 5. **undo 压缩的初步结论**：
    - 当前 `Vec<(Note,u8)>`：20B/音符（16B Note + key + 3B 对齐 pad）。
    - 16B 方案：`Vec<UndoNote>`（key 放进 Note 原有 padding）或按 key 分组的 `Vec<Note>`；10M 拷贝 15.9 ms（20B 是 21.4 ms），无编码/解码成本，是最便宜的 -20%。优先 `UndoNote`，保持 flat Vec 更简单。
@@ -642,6 +680,15 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
    - lz4：6.37 B/音符，10M 编码 220.2 ms、解码 37.6 ms；编码不占优，解码快，整体不如列式无压缩。
    - 如果要做，优先「按 key 分组 16B」做保底，再上「列式 delta，不叠通用压缩」；100M 解码约 1 秒你已表示可接受。zstd/lz4 的编码都不值得放在提交路径。
 6. 1M 的数字大约是同场景 10M 的 1/10；P0 的目标和验收应以 10M 为准。
+
+### M0 直接测量结果（`yinhe-tests/examples/memory_probe.rs`）
+
+| 项目 | 实测 | 结论 |
+|---|---|---|
+| 8 档 LOD 摘要（all+visible+args） | 40M/132 轨：49.0MB；24.3M/136 轨：73.5MB；160k/17 轨：8.9MB | 密曲只占原始层 8%~20%，8 档常驻合理，不需要改常驻策略 |
+| `insert_batch_sorted` 2× 峰值 | 10M + 10 万：154.2MB → 309.0MB（2.00×）；1M：16.9MB → 34.5MB | 2× 峰值确认，流式归并值得做 |
+| `NoteLayerCache` 窗口外桶 | 5M/256 key 滚完：额外 +99.6MB；最终 flat 仅 39k 实例 | 窗口外桶是实打实的常驻，移动端需要处理 |
+| 未测 | start.mid（1.2GB MIDI 预计 >120s；本地 .yin 是 v2/v5 旧格式）、`LayerSlot` 高水位（需 headless GPU）、真机 RSS、首帧 GPU 上传 | 需要长时间测试、真机或 headless GPU |
 
 注意：这是单 key 均匀分布的合成数据，不是 start.mid 的真实分布；真实曲目的最密集 key 可能更极端，但数量级已经足够说明问题。M4 修完后用同一命令复跑，不换数据。
 
@@ -667,7 +714,7 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 |---|---|---|---|
 | M0 | 补 bench + 尺寸断言 + 过期注释修正；跑 1~7，记录基线 | 无 | 已完成（2026-11-21） |
 | M1 | `NoteBucket::locate_at` + `update_at` + `remove_at` + 单元测试/对拍；模型层 `apply_note_stat_delta` 增量统计 | M0 通过 | 1~2 天 |
-| M2 | 模型层 `*_at` API；迁移铅笔/力度/单删/`set_note_end_tick`；删除无条件 sort 和单点 `rebuild_dirty`；`try_alloc_note_id` + 总量 guard | M1 | 1~2 天 |
+| M2 | 模型层 `*_at` API；迁移铅笔/力度/单删/`set_note_end_tick`；删除无条件 sort 和单点 `rebuild_dirty`；`try_alloc_note_id` + 总量 guard；`note_count` 等计数统一 u32 | M1 | 1~2 天 |
 | M3 | `delete_notes` / `move_clip` / `loop_clip_*` 批量化；COW 范围测试 | M2 | 1~2 天 |
 | M4 | 复跑 bench 对比，确认目标；清理旧单点 by-id API | M3 | 0.5 天 |
 | M5 | S3-1 注释/断言；关闭 LOD 时跳过摘要构建/上传；S3-4 `insert_batch_sorted` 流式归并 | 可与 M1~M4 并行 | 1~1.5 天 |
