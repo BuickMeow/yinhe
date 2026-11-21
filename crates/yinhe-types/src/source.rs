@@ -1,4 +1,6 @@
-use crate::{NoteBucket, NoteRangeIter, TimeSigEvent};
+use std::sync::Arc;
+
+use crate::{KeySummary, NoteBucket, NoteRangeIter, TimeSigEvent};
 
 pub trait NoteSource: Sync {
     /// All notes for `key`, stored as a chunked sorted sequence.
@@ -44,6 +46,15 @@ pub trait NoteSource: Sync {
     /// 音符时为 256。PR 使用自己的 `KeyLayout`，不读这个值。
     fn display_key_count(&self) -> u16 {
         128
+    }
+
+    /// 该 key 在指定块宽下的 LOD 摘要。
+    ///
+    /// 返回 `None` 表示数据源不提供摘要（调用方回退原始层）。实现方可以
+    /// 在内部按 `(block_ticks, 内容 revision)` 缓存，但摘要必须是模型内容的
+    /// 派生表示，不能依赖滚动位置。
+    fn key_summary(&self, _key: u8, _block_ticks: u32) -> Option<Arc<KeySummary>> {
+        None
     }
 
     /// Iterate the notes for `key` that may intersect `[tick_start, tick_end]`.

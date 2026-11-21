@@ -920,6 +920,10 @@ pub struct YinModel {
     /// re-upload without rescanning all KEY_COUNT buckets.
     pub note_revisions: [u64; KEY_COUNT],
 
+    /// 低倍率 LOD 摘要（只保留当前块宽一档）。派生表示，不参与序列化；
+    /// 编辑通过 `note_revisions` 失效，见 [`crate::lod`]。
+    pub lod: crate::lod::LodCache,
+
     /// Per-bucket note count cache for O(D) incremental stats in `rebuild_dirty()`.
     /// Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
     pub bucket_note_count: [u64; KEY_COUNT],
@@ -975,6 +979,7 @@ impl Default for YinModel {
             track_audible_count: Vec::new(),
             dirty_keys: [false; KEY_COUNT],
             note_revisions: [0; KEY_COUNT],
+            lod: crate::lod::LodCache::default(),
             bucket_note_count: [0; KEY_COUNT],
             bucket_max_end_tick: [0; KEY_COUNT],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),

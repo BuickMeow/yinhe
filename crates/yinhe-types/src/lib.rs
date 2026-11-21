@@ -15,6 +15,7 @@ mod mixer_node;
 mod note;
 pub mod note_bitset;
 pub mod note_bucket;
+pub mod note_summary;
 pub mod palette;
 pub mod pc_event;
 pub mod piano_roll_view;
@@ -47,6 +48,7 @@ pub use mixer_node::{
 pub use note::{Note, PencilNoteDrag, TimeSigEvent, VelocityEdit};
 pub use note_bitset::{NoteBitset, NoteBitsetBuilder};
 pub use note_bucket::{BUCKET_CHUNK_CAP, NoteBucket, NoteCursor, NoteRangeIter};
+pub use note_summary::{KeySummary, NoteSummary};
 pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
 pub use piano_roll_view::{Orientation, PianoRollView};

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use yinhe_types::{ArRowLayout, ArrangementView};
 use yinhe_wgpu::{InstanceRenderer, layer_cache_key};
-use yinhe_wgpu::{build_arr_notes, build_ghost_notes};
+use yinhe_wgpu::{build_arr_notes_culled, build_ghost_notes};
 
 use crate::piano_view::drag::{GhostNote, HiddenNote};
 
@@ -110,7 +110,7 @@ pub(crate) fn upload_note_layers(
     ]);
     renderer.upload_note_layer(0, notes_key, |out| {
         if let Some(midi) = data.midi {
-            build_arr_notes(
+            build_arr_notes_culled(
                 out,
                 w,
                 midi,

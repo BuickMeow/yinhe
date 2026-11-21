@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use yinhe_types::NoteSource;
+use yinhe_types::{KeySummary, NoteSource};
 
 #[cfg(test)]
 use std::collections::HashSet;
@@ -189,8 +189,78 @@ fn build_notes_range(
     out.extend(note_instances.into_iter().flatten());
 }
 
+/// 每个可见轨道行一个流式合并状态：(start, max_end, max_vel)。
+///
+/// 原始层与 LOD 摘要层共用同一套亚像素合并/裁剪规则，避免两条路径
+/// 出现像素级差异。
+struct TrackMerges {
+    states: Vec<Option<(u32, u32, u8)>>,
+    key: u8,
+    trk_first: usize,
+    tick_start: f64,
+    tick_end: f64,
+    merge_gap_ticks: u32,
+}
+
+impl TrackMerges {
+    fn new(
+        key: u8,
+        trk_first: usize,
+        bucket_count: usize,
+        tick_start: f64,
+        tick_end: f64,
+        merge_gap_ticks: u32,
+    ) -> Self {
+        Self {
+            states: vec![None; bucket_count],
+            key,
+            trk_first,
+            tick_start,
+            tick_end,
+            merge_gap_ticks,
+        }
+    }
+
+    /// `bi` 是相对可见行范围的轨道下标。
+    fn push(&mut self, out: &mut Vec<NoteInstance>, bi: usize, start: u32, end: u32, vel: u8) {
+        match self.states[bi] {
+            None => self.states[bi] = Some((start, end, vel)),
+            Some((ms, me, mv)) if start <= me.saturating_add(self.merge_gap_ticks) => {
+                self.states[bi] = Some((ms, me.max(end), mv.max(vel)));
+            }
+            Some(prev) => {
+                self.flush_one(out, bi, prev);
+                self.states[bi] = Some((start, end, vel));
+            }
+        }
+    }
+
+    fn flush_one(&self, out: &mut Vec<NoteInstance>, bi: usize, (start, end, vel): (u32, u32, u8)) {
+        let s = (f64::from(start)).max(self.tick_start) as u32;
+        let e = (f64::from(end)).min(self.tick_end) as u32;
+        if s < e {
+            out.push(NoteInstance {
+                start_tick: s,
+                end_tick: e,
+                packed: NoteInstance::pack(self.key, (self.trk_first + bi) as u16, vel),
+            });
+        }
+    }
+
+    fn finish(&mut self, out: &mut Vec<NoteInstance>) {
+        for bi in 0..self.states.len() {
+            if let Some(state) = self.states[bi].take() {
+                self.flush_one(out, bi, state);
+            }
+        }
+    }
+}
+
 /// 用 CPU Cull 构建 AR 音符层：每帧只遍历与视口相交的块，流式合并后
 /// 直接写入 `out`，不保留窗口副本、不分配 12B/音符的临时桶。
+///
+/// 低倍率优先使用 `NoteSource::key_summary` 的 LOD 摘要；摘要不可用
+/// （数据源不提供、或拖拽需要按音符隐藏）时回退原始层。
 ///
 /// 输出顺序是「key → 按 start_tick 交错各轨道」；AR 每个轨道占独立行，
 /// 行间绘制顺序不影响结果；同一轨道内仍按 start_tick 有序并做亚像素合并。
@@ -211,15 +281,47 @@ pub fn build_notes_culled(
     let bucket_count = trk_last.saturating_sub(trk_first);
     let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
 
+    // 隐藏集合非空时无法把按音符的过滤施加到聚合段上（一个段包含多个
+    // 音符，无法从 min/max 包络里减掉其中一个），因此回退原始层保证
+    // 拖拽 ghost 的正确性。摘要是模型级数据，不因拖拽而重建。
+    let summary_block = if hidden_notes.is_empty_hidden() {
+        crate::pianoroll::select_summary_level(ppu)
+            .map(|i| crate::pianoroll::SUMMARY_BLOCK_TICKS[i])
+    } else {
+        None
+    };
+
     let key_instances: Vec<Vec<NoteInstance>> = (0u8..=yinhe_types::MAX_KEY)
         .into_par_iter()
         .filter_map(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let chunks = midi.key_notes(key).chunks_in_range(tick_start, tick_end);
                 let mut local = Vec::new();
-                // 每个可见轨道行一个流式合并状态：(start, max_end, max_vel)。
-                let mut states: Vec<Option<(u32, u32, u8)>> = vec![None; bucket_count];
+                let mut merges = TrackMerges::new(
+                    key,
+                    trk_first,
+                    bucket_count,
+                    tick_start_f,
+                    tick_end_f,
+                    merge_gap_ticks,
+                );
 
+                if let Some(block_ticks) = summary_block
+                    && let Some(summary) = midi.key_summary(key, block_ticks)
+                {
+                    push_summary(
+                        &mut local,
+                        &mut merges,
+                        &summary,
+                        block_ticks,
+                        trk_first,
+                        trk_last,
+                        track_visible,
+                    );
+                    merges.finish(&mut local);
+                    return if local.is_empty() { None } else { Some(local) };
+                }
+
+                let chunks = midi.key_notes(key).chunks_in_range(tick_start, tick_end);
                 'chunks: for chunk in chunks {
                     for note in chunk.iter() {
                         if note.start_tick as f64 > tick_end_f {
@@ -238,46 +340,16 @@ pub fn build_notes_culled(
                         if hidden_notes.is_hidden(note, key) {
                             continue;
                         }
-                        let bi = ti - trk_first;
-                        match states[bi] {
-                            None => {
-                                states[bi] = Some((note.start_tick, note.end_tick, note.velocity))
-                            }
-                            Some((ms, me, mv))
-                                if note.start_tick <= me.saturating_add(merge_gap_ticks) =>
-                            {
-                                states[bi] =
-                                    Some((ms, me.max(note.end_tick), mv.max(note.velocity)));
-                            }
-                            Some(prev) => {
-                                let s = (f64::from(prev.0)).max(tick_start_f) as u32;
-                                let e = (f64::from(prev.1)).min(tick_end_f) as u32;
-                                if s < e {
-                                    local.push(NoteInstance {
-                                        start_tick: s,
-                                        end_tick: e,
-                                        packed: NoteInstance::pack(key, ti as u16, prev.2),
-                                    });
-                                }
-                                states[bi] = Some((note.start_tick, note.end_tick, note.velocity));
-                            }
-                        }
+                        merges.push(
+                            &mut local,
+                            ti - trk_first,
+                            note.start_tick,
+                            note.end_tick,
+                            note.velocity,
+                        );
                     }
                 }
-
-                for (bi, state) in states.iter().enumerate() {
-                    if let Some((start, end, vel)) = *state {
-                        let s = (f64::from(start)).max(tick_start_f) as u32;
-                        let e = (f64::from(end)).min(tick_end_f) as u32;
-                        if s < e {
-                            local.push(NoteInstance {
-                                start_tick: s,
-                                end_tick: e,
-                                packed: NoteInstance::pack(key, (trk_first + bi) as u16, vel),
-                            });
-                        }
-                    }
-                }
+                merges.finish(&mut local);
 
                 if local.is_empty() { None } else { Some(local) }
             })
@@ -285,6 +357,46 @@ pub fn build_notes_culled(
         .collect();
 
     out.extend(key_instances.into_iter().flatten());
+}
+
+fn push_summary(
+    out: &mut Vec<NoteInstance>,
+    merges: &mut TrackMerges,
+    summary: &KeySummary,
+    block_ticks: u32,
+    trk_first: usize,
+    trk_last: usize,
+    track_visible: &[bool],
+) {
+    let tick_start = merges.tick_start;
+    let tick_end = merges.tick_end;
+    let start_idx = summary.first_segment(tick_start.max(0.0) as u32, block_ticks);
+    let end_block = (tick_end.max(0.0) as u32) / block_ticks.max(1);
+    for seg in &summary.segments[start_idx..] {
+        if seg.block > end_block {
+            break;
+        }
+        if (seg.end_tick as f64) < tick_start {
+            continue;
+        }
+        if (seg.start_tick as f64) > tick_end {
+            continue;
+        }
+        let ti = seg.track as usize;
+        if ti < trk_first || ti >= trk_last {
+            continue;
+        }
+        if !track_visible.get(ti).copied().unwrap_or(true) {
+            continue;
+        }
+        merges.push(
+            out,
+            ti - trk_first,
+            seg.start_tick,
+            seg.end_tick,
+            seg.velocity,
+        );
+    }
 }
 
 /// Build ghost note instances for move-drag preview (layer 3, no cache).
@@ -561,6 +673,124 @@ mod tests {
 
     fn packed_track(packed: u32) -> u16 {
         ((packed >> 9) & 0xFFFF) as u16
+    }
+
+    fn dense_model() -> yinhe_core::YinModel {
+        use yinhe_types::Note;
+        let mut model = yinhe_core::YinModel::new_empty_with_16_tracks();
+        for i in 0..2000u32 {
+            model.insert_note(
+                60,
+                Note {
+                    id: i + 1,
+                    start_tick: i * 3,
+                    end_tick: i * 3 + 2,
+                    velocity: 100,
+                    track: 0,
+                },
+            );
+        }
+        model.rebuild();
+        model
+    }
+
+    /// LOD 摘要路径（低倍率）与原始层的整体包络必须一致；不能因为聚合
+    /// 丢掉长音符或越界段。
+    #[test]
+    fn culled_lod_keeps_long_note_visible() {
+        use yinhe_types::Note;
+        let mut model = yinhe_core::YinModel::new_empty_with_16_tracks();
+        model.insert_note(
+            60,
+            Note {
+                id: 1,
+                start_tick: 0,
+                end_tick: 150_000,
+                velocity: 100,
+                track: 0,
+            },
+        );
+        model.insert_note(
+            61,
+            Note {
+                id: 2,
+                start_tick: 90_000,
+                end_tick: 90_100,
+                velocity: 100,
+                track: 0,
+            },
+        );
+        model.rebuild();
+
+        let mut view = ArrangementView::default();
+        view.base.pixels_per_tick = 0.001;
+        view.base.scroll_x = 90.0; // 视口从 tick 90000 开始
+        view.base.left_panel_width = 0.0;
+
+        let mut out = Vec::new();
+        build_notes_culled(
+            &mut out,
+            100.0,
+            &model,
+            &view,
+            (0, 1),
+            &[true],
+            &HashSet::new(),
+        );
+        assert!(
+            out.iter()
+                .any(|n| n.start_tick <= 90_000 && n.end_tick >= 90_100),
+            "跨越视口起点的长音符被 LOD 摘要漏掉: {out:?}"
+        );
+    }
+
+    /// 隐藏集合非空时必须回退原始层：摘要段是聚合值，无法从中减掉单个音符。
+    #[test]
+    fn culled_lod_falls_back_to_raw_when_hidden_present() {
+        let model = dense_model();
+        let mut view = ArrangementView::default();
+        view.base.pixels_per_tick = 0.01;
+        view.base.left_panel_width = 0.0;
+
+        let mut hidden_probe = HashSet::new();
+        hidden_probe.insert((999u16, 0u32, 0u8));
+        let mut with_hidden = Vec::new();
+        build_notes_culled(
+            &mut with_hidden,
+            4000.0,
+            &model,
+            &view,
+            (0, 1),
+            &[true],
+            &hidden_probe,
+        );
+
+        let raw = make_midi(
+            (0..2000u32)
+                .map(|i| (60u8, i * 3, i * 3 + 2, 0u16, 100u8))
+                .collect(),
+        );
+        let mut raw_out = Vec::new();
+        build_notes_culled(
+            &mut raw_out,
+            4000.0,
+            &raw,
+            &view,
+            (0, 1),
+            &[true],
+            &HashSet::new(),
+        );
+        assert_eq!(
+            with_hidden
+                .iter()
+                .map(|n| (n.start_tick, n.end_tick))
+                .collect::<Vec<_>>(),
+            raw_out
+                .iter()
+                .map(|n| (n.start_tick, n.end_tick))
+                .collect::<Vec<_>>(),
+            "hidden 非空时应与原始层完全一致"
+        );
     }
 
     /// 折叠通道合并行：两条轨道的音符经同一行 id 跨轨合并（子像素间隙内）。

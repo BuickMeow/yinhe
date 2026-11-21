@@ -5,7 +5,9 @@
 //! that already speaks NoteSource (PianoRoll, Arrangement) works without
 //! changes.
 
-use yinhe_types::{NoteBucket, NoteRangeIter, NoteSource, TimeSigEvent};
+use std::sync::Arc;
+
+use yinhe_types::{KeySummary, NoteBucket, NoteRangeIter, NoteSource, TimeSigEvent};
 
 use crate::model::YinModel;
 
@@ -60,6 +62,10 @@ impl NoteSource for YinModel {
 
     fn time_sig_events(&self) -> &[TimeSigEvent] {
         &self.tempo_map.time_sig_events
+    }
+
+    fn key_summary(&self, key: u8, block_ticks: u32) -> Option<Arc<KeySummary>> {
+        Some(self.key_summary_for_render(key, block_ticks))
     }
 }
 

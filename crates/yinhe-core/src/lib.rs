@@ -14,6 +14,7 @@ mod audio_warp;
 mod automation;
 mod clip;
 mod events;
+mod lod;
 mod model;
 mod model_stats;
 mod model_transform;
