@@ -810,7 +810,10 @@ pub fn preview_notes(notes: Vec<yinhe_audio::PreviewNoteParams>, exclusive: bool
     if !ensure_audio() {
         return;
     }
-    recover_stream_error();
+    // 不在这里做 recover_stream_error：本函数会被 edit 预览在持有 scene 锁时
+    // 调用（preview_note/preview_group），而 recover_stream_error 会先取模型、
+    // 二次锁 scene，导致同线程自锁。流失效由 Dart ticker 每秒的
+    // yinhe_audio_recover 与 play() 前的检查负责。
     let Some(mut guard) = lock_audio() else {
         return;
     };
@@ -842,7 +845,7 @@ pub fn update_notes(model: Arc<YinModel>) {
     let Some(mut guard) = lock_audio() else {
         return;
     };
-    let (cursor, skip, playing) = snapshot_playback(&mut guard);
+    let (cursor, skip, playing) = snapshot_playback(&mut guard, Some(&model));
     if rebuild_for_model(&mut guard, &model, cursor, skip) {
         resume_rebuilt(&mut guard, model, cursor, playing);
         return;
@@ -858,7 +861,7 @@ pub fn reload_notes(model: Arc<YinModel>) {
     let Some(mut guard) = lock_audio() else {
         return;
     };
-    let (cursor, skip, playing) = snapshot_playback(&mut guard);
+    let (cursor, skip, playing) = snapshot_playback(&mut guard, Some(&model));
     if rebuild_for_model(&mut guard, &model, cursor, skip) {
         resume_rebuilt(&mut guard, model, cursor, playing);
         return;
@@ -887,10 +890,15 @@ pub fn on_model_loaded(model: Arc<YinModel>) {
 }
 
 /// 重建前快照：当前光标、轨道 skip 掩码、是否正在播放。
-fn snapshot_playback(guard: &mut Option<AudioState>) -> (f64, Vec<bool>, bool) {
+///
+/// `model` 由调用方提供，避免持 AUDIO 锁时再取 scene 锁（锁顺序 scene → audio）。
+fn snapshot_playback(
+    guard: &mut Option<AudioState>,
+    model: Option<&YinModel>,
+) -> (f64, Vec<bool>, bool) {
     match guard.as_mut() {
         Some(st) => {
-            let cursor = flow_sync_cursor(st);
+            let cursor = flow_sync_cursor(st, model);
             (cursor, st.skip.clone(), st.handle.handle.is_playing())
         }
         None => (0.0, Vec::new(), false),
@@ -926,6 +934,8 @@ pub fn play() {
         return;
     }
     recover_stream_error();
+    // 先取模型快照，再进 AUDIO 锁：避免持 AUDIO 时反向锁 SCENE。
+    let model = current_model();
     let mut tick = {
         let Some(mut guard) = lock_audio() else {
             return;
@@ -933,10 +943,10 @@ pub fn play() {
         let Some(st) = guard.as_mut() else {
             return;
         };
-        flow_sync_cursor(st)
+        flow_sync_cursor(st, model.as_deref())
     };
     // 上次播放停在工程末尾：再按播放从头开始（常规播放器行为）。
-    if let Some(model) = current_model()
+    if let Some(model) = model.as_ref()
         && tick >= model.tick_length as f64
     {
         tick = 0.0;
@@ -946,7 +956,10 @@ pub fn play() {
             st.cursor_tick = 0.0;
         }
     }
-    let seconds = model_seconds(tick);
+    let seconds = model
+        .as_ref()
+        .map(|m| m.tempo_map.tick_to_seconds(tick.max(0.0) as u64))
+        .unwrap_or(0.0);
     let Some(mut guard) = lock_audio() else {
         return;
     };
@@ -1107,13 +1120,15 @@ fn model_seconds(tick: f64) -> f64 {
 }
 
 /// 播放中：用采样位置刷新光标；返回最新光标 tick。
-fn flow_sync_cursor(st: &mut AudioState) -> f64 {
-    if st.handle.handle.is_playing() {
-        let model = current_model();
-        if let Some(model) = model {
-            let seconds = st.smooth_sample_position() as f64 / st.handle.sample_rate as f64;
-            st.cursor_tick = seconds_to_tick(&model, seconds);
-        }
+///
+/// `model` 由调用方传入。禁止在这里调用 `current_model()`：本函数在 AUDIO
+/// 锁内执行，再去拿 SCENE 会与 `view_snapshot`（SCENE → AUDIO）形成 ABBA。
+fn flow_sync_cursor(st: &mut AudioState, model: Option<&YinModel>) -> f64 {
+    if st.handle.handle.is_playing()
+        && let Some(model) = model
+    {
+        let seconds = st.smooth_sample_position() as f64 / st.handle.sample_rate as f64;
+        st.cursor_tick = seconds_to_tick(model, seconds);
     }
     st.cursor_tick
 }
