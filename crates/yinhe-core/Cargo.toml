@@ -10,7 +10,14 @@ rayon = { workspace = true }
 serde = { workspace = true }
 uuid = { workspace = true }
 
+[dev-dependencies]
+zstd = { version = "0.14", default-features = false }
+
 # 纯 std 基准（harness = false：直接运行 main，不用 #[bench]）
 [[bench]]
 name = "chunked_bench"
+harness = false
+
+[[bench]]
+name = "note_hotpath_bench"
 harness = false
