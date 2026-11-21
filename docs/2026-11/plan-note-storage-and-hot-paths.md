@@ -15,7 +15,7 @@
 > 4. **先做 bench，再开始修**。M0 是硬门禁，bench 结果评审后才进 M1。见第 5 节。
 > 5. **不是所有措施都双端有效**：模型/热路径/批量/undo/save 是双端共享；GPU cull 的 8 档摘要和全量重建是桌面端专用；移动端另有 `NoteLayerCache` 常驻桶、`LayerSlot` 高水位等问题。见 3.9。
 > 6. **M0 基准已完成**（Apple M5 / release）：10M 单 key 完整铅笔路径约 81~91 ms/帧，`rebuild_dirty` 占 85%；优化后原型（bench 内，非生产）改 end 2.7µs、左拉伸 43.4µs、删除 14.9µs；列式 undo delta 7.87B/音符，10M 解码 58.1ms、100M 实测 2.2s（峰值 RSS 4.63GB）。见第 5 节。
-> 7. **“待测”项已测一部分**：40M 工程 8 档摘要合计 49MB（原始层 616MB）；10M 桶 `insert_batch_sorted` 峰值 154.2→309.0MB（2.00×）；5M/256 key 滚完 `NoteLayerCache` 额外 +99.6MB。start.mid、LayerSlot、真机 RSS 未测。见 5 节。
+> 7. **“待测”项已测**：start.mid 8 档摘要 437MB（原始层 2.53GB，峰值 RSS 5.34GB）；10M 桶 `insert_batch_sorted` 峰值 154.2→309.0MB（2.00×）；5M/256 key 滚完 `NoteLayerCache` 额外 +99.6MB；100M 列式 undo 解码 2.2s、峰值 RSS 4.63GB。LayerSlot、真机 RSS 仍未测。见 5 节。
 
 1. **保留 `start_tick + end_tick`，`Note` 维持 16B。** 换成「起点+长度」内存完全一样，性能差异被内存带宽淹没；现有 `max_ends`、`range_including_long`、GPU `NoteInstance` 都以 end 为中心，改 gate 只增加溢出和 `gate = 0` 两个边界。
 2. **P0 是第 4 节的单音符热路径**：按 id 线性扫整桶、每次 `update_note_by_id` 无条件 `sort()`、单点删除后全桶重算 `max_ends`、单点编辑后 `rebuild_dirty()` 重扫整桶。这是 1 亿音符下真正会卡手的地方，优先级高于省 4B/音符。该层在 `yinhe-types` / `yinhe-core`，桌面和移动端同时受益。
@@ -145,7 +145,7 @@ track     2
 | CPU 模型 | `Note` | 16B/音符 | 1.60GB | 2.62GB | 常驻 | 不动 |
 | GPU 原始层 all_notes | `NoteInstance` | 12B/音符 | 1.20GB | 1.97GB | 常驻 | 不动 |
 | GPU 原始层 visible 索引 | `u32` 索引 | 4B/槽，按 256 向上取整 | 0.40GB | 0.66GB | 常驻 | 不动 |
-| GPU LOD 摘要层 | `NoteInstance` + 索引 | 12B/段 + 4B/槽 | 实测 40M: 49MB；外推 ~120~180MB | 外推 ~200~300MB | 常驻 | S3-2 |
+| GPU LOD 摘要层 | `NoteInstance` + 索引 | 12B/段 + 4B/槽 | 外推 ~270MB | 实测 437MB | 常驻 | S3-2 |
 | 全量重建的 raw 缓冲 | `Vec<NoteInstance>` | 12B/音符 | 1.20GB | 1.97GB | 瞬时 | S3-3 |
 | 全量重建的摘要缓冲 | 8 档 `Vec<NoteInstance>` | 12B × Σ段 | 实测 40M: 36MB；外推 ~90~140MB | 外推 ~150~230MB | 瞬时 | S3-3 |
 | UI 可见窗口 | per-key + flat + 窗口外桶 | 12B × 窗口段数 × 2 + 窗口外残留 | 实测 5M/256 key: +99.6MB | 随窗口 | 常驻 | 3.7 / 3.9 |
@@ -197,10 +197,11 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 | A[BlackMidi] Wooden | 160k | 17 | 8.9MB | 2.5MB | 356% |
 | Ouranos | 24.3M | 136 | 73.5MB | 375MB | 20% |
 | ReptilianDarkRitual | 40.0M | 132 | 49.0MB | 616MB | 8% |
+| start.mid | 164.2M | 799 | 437.3MB | 2530MB | 17% |
 
-结论：**音符越密，摘要相对原始层越小**。40M 的 8 档摘要只有 49MB，远小于原始层 616MB；8 档常驻是合理的，不需要为了省显存去动常驻策略。160k 的小工程摘要反而比原始层大，但绝对值只有 9MB，无所谓。
+结论：**音符越密，摘要相对原始层越小**。start.mid 的 8 档摘要 437MB，原始层 2.53GB，约占 17%；8 档常驻是合理的，不需要为了省显存去动常驻策略。小工程摘要反而比原始层大，但绝对值只有 9MB，无所谓。
 
-start.mid（1.64 亿 / 799 轨）还没测：本地 `start.yin` 是 v2/v5 旧版本，当前代码读不了；直接解析 1.2GB `start.mid` 预计超过 120 秒限制，需要你批准长时间测试。按 40M 数据外推，8 档摘要大约 200~300MB，仍远小于原始层 2.6GB。
+start.mid 的加载 + raw + 8 档摘要构建总耗时 16.05s，峰值 RSS 5.34GB；这是桌面端的数据。移动端 4~6GB 设备不适合加载 1.64 亿音符工程。
 
 先做低风险开关，再测量：
 
@@ -224,7 +225,7 @@ start.mid（1.64 亿 / 799 轨）还没测：本地 `start.yin` 是 v2/v5 旧版
 - `BuildResult` 同时持有 `summaries: Vec<(Vec<NoteInstance>, offsets)>`，8 档全在；
 - UI 线程按每帧 4 个 key 上传，上传完成前整份载荷都活着。
 
-`build_all_notes` 已经做过一次优化（去掉 per-key 中间 Vec，峰值从约 5GB 降到一份最终缓冲），不要回退。剩余峰值主要来自 raw 的 12B/音符；8 档摘要的实测值只有 36~54MB（24M/40M 工程），不是大头。
+`build_all_notes` 已经做过一次优化（去掉 per-key 中间 Vec，峰值从约 5GB 降到一份最终缓冲），不要回退。剩余峰值主要来自 raw 的 12B/音符；8 档摘要实测：24M/40M 是 36~54MB，start.mid 是 324MB（all）/437MB（含 visible+args），仍小于 raw 1.88GB/2.53GB。
 
 分两步，**都保持 8 档全量常驻**：
 
@@ -278,7 +279,8 @@ start.mid（1.64 亿 / 799 轨）还没测：本地 `start.yin` 是 v2/v5 旧版
 
 - `NoteDelta` 内部始终用列式 delta（小编辑的编码/解码是微秒级，开销可忽略）；
 - 提供 `iter()` 解码迭代器，避免一次性物化整个 `Vec<Note>`；
-- 撤销/重做按 key 流式恢复，不要求一次分配上亿音符的 `Vec`。
+- 撤销/重做按 key 流式恢复，不要求一次分配上亿音符的 `Vec`；
+- 恢复过程提供 `on_progress(done_notes, total_notes)`，后台线程执行，UI 只更新进度条；移动端更慢，进度条和可取消是必需项，不能冻结 UI。
 
 这样没有大小分支，也没有「小 delta 用旧路径、大 delta 用新路径」的双实现。代价是 `NoteDelta` API 变化，所有生成端/消费端都要迁移；这必须在 bench 证明值得后再做。
 
@@ -316,7 +318,8 @@ start.mid（1.64 亿 / 799 轨）还没测：本地 `start.yin` 是 v2/v5 旧版
 
 - **先做 16B `UndoNote`**：把 `key` 放进 `Note` 原有的 1B padding，`Vec<UndoNote>` 是 16B/音符，20B → 16B，省 20%，无编码/解码成本。它比「按 key 分组」更简单：保持 flat Vec，不需要分组结构；模型 `Note` 不变。
 - `Vec<Note>` 按 key 分组同样是 16B，效果等价；如果不想新增 `UndoNote` 结构，也可以走分组。
-- **列式 delta 是内存主选项**：7.87B/音符，省 61%；10M 编解码约 0.05s，但 100M 实测编码 1.54s、解码 2.21s，**超过你说的 1 秒**。100M 是极端操作，2.2s 是否可接受需要你拍板；如果不能接受，就只做 16B `UndoNote`。
+- **列式 delta 是内存主选项**：7.87B/音符，省 61%；10M 编解码约 0.05s，100M 实测编码 1.54s、解码 2.21s。你已表示 2.2s 可接受，前提是带进度条；移动端可能更慢，进度条同样适用。
+- **必须按 key 流式恢复**：100M 全量物化的峰值 RSS 是 4.63GB，移动端 4~6GB 有 OOM 风险。列式的价值一半在 7.87B 内存，一半在「解码一个 key 就恢复一个 key」的流式路径。
 - **zstd1 / zstd3 不适合提交路径**：100M 编码 3.9s / 7.4s，解码 1.4s；编码已经输了。
 - **lz4 也不占优**：100M 5.56B，编码 3.9s，解码 1.3s；不如列式无压缩。
 - 没有发现比 varint 列式更快且更省的通用手段。下一步如果要继续压，只能考虑：
@@ -324,7 +327,7 @@ start.mid（1.64 亿 / 799 轨）还没测：本地 `start.yin` 是 v2/v5 旧版
   - 把 undo delta 落临时文件/内存映射，省 RAM 但引入 I/O，移动端不一定划算；
   - 历史预算（丢最老 undo），产品决策。
 
-本次建议：**先做 16B `UndoNote`（key 放 padding）保底；列式 delta 只有在你能接受 100M 约 2.2s 解码、并且实现按 key 流式恢复时才做；不引入 zstd/lz4 到提交路径。** 流式恢复能把峰值从 4.63GB 降到约「编码列 787MB + 单 key 解码」，是移动端的关键。
+本次建议：**先做 16B `UndoNote`（key 放 padding）保底；列式 delta 进入实现候选，条件是带进度条 + 按 key 流式恢复；不引入 zstd/lz4 到提交路径。** 流式恢复能把峰值从 4.63GB 降到约「编码列 787MB + 单 key 解码」，是移动端的关键。
 
 ### 3.7 S3-6：接受 / 不修 / 移动端专项
 
@@ -379,8 +382,8 @@ start.mid（1.64 亿 / 799 轨）还没测：本地 `start.yin` 是 v2/v5 旧版
 
 移动端 4~6GB 的粗略判断：
 
-- 1 亿音符模型 1.6GB，加上系统、音频、GPU 缓冲和 undo，6GB 设备可以跑，4GB 设备已经很紧。
-- 1.64 亿音符模型 2.62GB，4GB 设备基本不可行，6GB 也要看音频/贴图占用。
+- 1 亿音符模型 1.6GB，加上加载/raw/摘要峰值（按 1.64 亿的 5.34GB 线性外推约 3.3GB），6GB 设备可以跑，4GB 已经很紧。
+- 1.64 亿音符模型 2.62GB，start.mid 实测加载 + raw + 8 档摘要峰值 RSS 5.34GB；4GB 设备基本不可行，6GB 也要看音频/贴图占用。
 - 所以移动端真正值得先做的是：P0（CPU 不卡，间接省内存峰值）、undo 压缩（bench 后）、保存峰值、`NoteLayerCache` 桶释放、`LayerSlot` 缩容；GPU 摘要 8 档那套是桌面专项，移动端不用投入。
 
 ---
@@ -648,8 +651,8 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 1. **单音符热路径**（1M / 10M 音符/key）：改 end、改 velocity、删除、移动、左拉伸；`*_by_id` vs `*_at` 各跑一遍，记录 µs/op 和峰值内存。✅ 已完成（note_hotpath_bench）。
 2. **批量操作**：`insert_batch_sorted` 往 1M 桶插入 10 万；`delete_notes` k=1/100/1000；`move_clip` k=1万/10万。✅ 批量插入已测（1M/10M + 峰值）；`delete_notes`/`move_clip` 的 k 规模未单独测，底层 remove 成本已覆盖。
 3. **undo delta**：1M / 10M / 100M，对比 `Vec<(Note,u8)>`、列式 delta、列式+zstd；记录编码/解码耗时和字节数。✅ 1M/10M/100M 已测；100M 峰值 RSS 4.63GB，列式解码 2.2s。
-4. **内存快照**：加载完成、首帧上传完成、全量重建完成三个点，桌面 + 移动端各一份；100M 合成工程必测，start.mid 视 120 秒限制决定是否申请长时间测试。⚠️ 只测了 CPU 侧 summary/batch/cache；首帧 GPU 上传、移动端真机 RSS、start.mid 未测。
-5. **GPU 摘要段数**：桌面端 8 档各多少段、多少字节；确认是否值得继续优化。✅ 已测 160k/24M/40M 三个工程；start.mid 待长测试。
+4. **内存快照**：加载完成、首帧上传完成、全量重建完成三个点，桌面 + 移动端各一份；100M 合成工程必测，start.mid 已批准长测试。✅ start.mid 已测（16.05s，峰值 RSS 5.34GB）；首帧 GPU 上传、移动端真机 RSS 未测。
+5. **GPU 摘要段数**：桌面端 8 档各多少段、多少字节；确认是否值得继续优化。✅ 已测 160k/24M/40M/start.mid（164M，437MB）；8 档常驻合理。
 6. **移动端 `NoteLayerCache` 桶增长**：高倍率垂直滚完 256 个 key，记录 RSS；确认窗口外桶是否是大头。✅ 已用共享 CPU 路径实测（5M/256 key，+99.6MB）；真机 RSS 未测。
 7. **移动端 `LayerSlot` 高水位**：全曲 zoom-out 再 zoom-in，记录 GPU/CPU 容量是否回落。❌ 未测：需要 headless wgpu 设备或真机；代码逻辑已确认只涨不缩。
 
@@ -691,18 +694,19 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
    - zstd1：4.72 B/音符，10M 编码 213.9 ms、解码 92.9 ms；外推 100M 约 2.1 s / 0.9 s，提交时仍偏慢。
    - zstd3：3.99 B/音符，但 10M 编码 496.4 ms、解码 114.5 ms；外推 100M 编码约 5 s，**不适合在编辑提交时做**。
    - lz4：6.37 B/音符，10M 编码 220.2 ms、解码 37.6 ms；编码不占优，解码快，整体不如列式无压缩。
-   - 如果要做，优先「按 key 分组 16B」做保底，再上「列式 delta，不叠通用压缩」；100M 解码约 1 秒你已表示可接受。zstd/lz4 的编码都不值得放在提交路径。
+   - 如果要做，优先「按 key 分组 16B」做保底，再上「列式 delta，不叠通用压缩」；100M 实测 2.2s，你已表示可接受，前提是带进度条 + 按 key 流式恢复。zstd/lz4 的编码都不值得放在提交路径。
 6. 1M 的数字大约是同场景 10M 的 1/10；P0 的目标和验收应以 10M 为准。
 
 ### M0 直接测量结果（`yinhe-tests/examples/memory_probe.rs`）
 
 | 项目 | 实测 | 结论 |
 |---|---|---|
-| 8 档 LOD 摘要（all+visible+args） | 40M/132 轨：49.0MB；24.3M/136 轨：73.5MB；160k/17 轨：8.9MB | 密曲只占原始层 8%~20%，8 档常驻合理，不需要改常驻策略 |
+| 8 档 LOD 摘要（all+visible+args） | start.mid 164.2M/799 轨：437.3MB（原始层 2.53GB，17%）；40M/132 轨：49.0MB（8%）；24.3M/136 轨：73.5MB（20%）；160k/17 轨：8.9MB | 密曲只占原始层 8%~20%，8 档常驻合理 |
+| start.mid 加载 + raw + 摘要 | 16.05s，峰值 RSS 5.34GB | 桌面可接受；4~6GB 移动端不适合 164M |
 | `insert_batch_sorted` 2× 峰值 | 10M + 10 万：154.2MB → 309.0MB（2.00×）；1M：16.9MB → 34.5MB | 2× 峰值确认，流式归并值得做 |
 | `NoteLayerCache` 窗口外桶 | 5M/256 key 滚完：额外 +99.6MB；最终 flat 仅 39k 实例 | 窗口外桶是实打实的常驻，移动端需要处理 |
-| 100M undo delta | 列式 7.87B：编码 1544ms、解码 2209ms；峰值 RSS 4.63GB | 超过 1s 预算；必须按 key 流式解码，否则移动端易 OOM |
-| 未测 | start.mid（1.2GB MIDI 预计 >120s；本地 .yin 是 v2/v5 旧格式）、`LayerSlot` 高水位（需 headless GPU）、真机 RSS、首帧 GPU 上传 | 需要长时间测试、真机或 headless GPU |
+| 100M undo delta | 列式 7.87B：编码 1544ms、解码 2209ms；峰值 RSS 4.63GB | 2.2s 已接受；必须带进度条并按 key 流式恢复 |
+| 未测 | `LayerSlot` 高水位（需 headless GPU）、真机 RSS、首帧 GPU 上传 | 需要 GPU 设备或真机 |
 
 注意：这是单 key 均匀分布的合成数据，不是 start.mid 的真实分布；真实曲目的最密集 key 可能更极端，但数量级已经足够说明问题。M4 修完后用同一命令复跑，不换数据。
 
@@ -733,7 +737,7 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 | M4 | 复跑 bench 对比，确认目标；清理旧单点 by-id API | M3 | 0.5 天 |
 | M5 | S3-1 注释/断言；关闭 LOD 时跳过摘要构建/上传；S3-4 `insert_batch_sorted` 流式归并 | 可与 M1~M4 并行 | 1~1.5 天 |
 | M6 | S3-2/S3-3：8 档仍全量常驻，只做逐档构建/上传峰值优化和逐 key 重建评估 | M5 | 先测后估 |
-| M7 | S3-5 undo delta：100M 已测；先做 16B `UndoNote`；列式 7.87B 仅在接受 2.2s 解码 + 按 key 流式恢复时做 | M0 数据 | 待定 |
+| M7 | S3-5 undo delta：100M 已测；先做 16B `UndoNote`；列式 7.87B 已接受，必须带进度条 + 按 key 流式恢复 | M0 数据 | 待定 |
 | M8 | 移动端专项：`NoteLayerCache` 窗口外桶释放、`LayerSlot` 缩容（先测后做） | M0 数据 | 待定 |
 
 P0（M1~M4）先合入，再碰内存结构。不要一边改音符布局一边改写路径，出问题无法定位。
@@ -763,15 +767,14 @@ P0（M1~M4）先合入，再碰内存结构。不要一边改音符布局一边�
 2. GPU 摘要 8 档必须常驻，不做「首次进入某档再准备」；只优化构建/上传峰值。见 3.3。
 3. undo 压缩必须先 bench。见 3.6。
 4. 先做 bench，再开始修；M0 是硬门禁。见第 5 节。
-5. undo 100M 列式解码实测 2.2s、峰值 RSS 4.63GB；16B `UndoNote` 先做，列式是否值得做改为待定。见 3.6.4。
+5. 100M 列式 undo 解码 2.2s 可接受，前提是带进度条；实现必须按 key 流式恢复，不一次性物化 `Vec<Note>`。见 3.6.4。
 
 待定：
 
 1. 左拉伸原型 43.4µs（无 COW），真实预计 ~100µs；目标定 100µs 还是 200µs？
-2. undo 100M 列式解码 2.2s（超过你说的 1s）是否可接受？如果不能，是否只做 16B `UndoNote`，不做列式？
-3. 移动端 4~6GB 的目标工程规模是多少（1 亿 / 5000 万 / 更小）？这决定 undo 压缩、`NoteLayerCache` 桶释放、保存峰值三者的优先级。
-4. 保存峰值（1.64 亿约 3.9GB）是否要单独排期？移动端上它可能比音符结构更早触发 OOM。
-5. 是否同意先只做 P0（M1~M4），内存结构等实测数据出来再排期。
+2. 移动端 4~6GB 的目标工程规模是多少（1 亿 / 5000 万 / 更小）？这决定 undo 压缩、`NoteLayerCache` 桶释放、保存峰值三者的优先级。
+3. 保存峰值（start.mid 加载峰值 5.34GB；1.64 亿保存约 3.9GB）是否要单独排期？移动端上它可能比音符结构更早触发 OOM。
+4. 是否同意先只做 P0（M1~M4），内存结构等实测数据出来再排期。
 
 ---
 
