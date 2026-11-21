@@ -9,7 +9,12 @@ use serde_json::{Value, json};
 /// 聚合当前活动任务。`state`: 0=空闲 1=运行中 2=完成 3=失败。
 pub fn tasks_json() -> String {
     let mut tasks: Vec<Value> = Vec::new();
-    push_status(&mut tasks, "doc", "文档任务", &crate::doc_job::status_json());
+    push_status(
+        &mut tasks,
+        "doc",
+        "文档任务",
+        &crate::doc_job::status_json(),
+    );
     push_status(
         &mut tasks,
         "midi_import",
