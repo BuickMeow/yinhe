@@ -147,7 +147,7 @@ pub(super) fn upload_pianoroll(
         height: h,
         track_visible: &visible,
         track_selected: &z_selected,
-        hidden_notes: preview.hidden.as_ref(),
+        hidden_notes: preview.hidden_filter(),
         hidden_hash: preview.hidden_hash,
         selection: Some(selection),
         note_revisions: &model.note_revisions,
@@ -297,7 +297,7 @@ pub(super) fn upload_arrangement(
             view,
             (trk_first, trk_last),
             &visible,
-            preview.hidden.as_ref(),
+            preview.hidden_filter(),
         );
     });
     // AR ghost：与 PR 共用 DragPreview；无 ghost 时上传空层清掉上一帧。

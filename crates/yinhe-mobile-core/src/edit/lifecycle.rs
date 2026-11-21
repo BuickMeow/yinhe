@@ -23,14 +23,12 @@ pub fn begin_sel_handle(d: &mut DragState, s: &mut RenderScene, h: SelHandle, x:
         // Riff 预览只画重复选框，不预先扫描/物化选中音符。
         d.drag_hidden = Some(std::sync::Arc::new(yinhe_types::HiddenNotes::default()));
     } else {
-        d.drag = crate::selection_materializer::take_drag(s);
-        d.drag_hidden = d
-            .drag
+        // 直接用当前选区做隐藏过滤器：预览时再按可见区扫描模型。
+        d.drag = s
+            .document
             .as_ref()
-            .map(|drag| std::sync::Arc::clone(&drag.hidden));
-        if d.drag.is_none() {
-            crate::selection_materializer::schedule_drag(s);
-        }
+            .map(|doc| std::sync::Arc::new(doc.edit.selected.clone()));
+        d.drag_hidden = None;
         s.sel_drag_active = true;
         // 整体变速/批量 gate 都保持左、上、右三条边，只让右缘跟手。
         s.hold_sel_edge(0);
@@ -448,10 +446,7 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
     if s.document.is_none() || s.active_track == Some(0) {
         return 0;
     }
-    // 按下时 `begin_pr`/`begin_arr` 已尝试取过后台物化的 ghost；手势真正
-    // 开始时只重置起点并复用，避免同一选区被 O(N) 扫描两遍。
-    let prev_drag = d.drag.clone();
-    let prev_hidden = d.drag_hidden.clone();
+    // 手势真正开始时只重置起点；选区快照在下面命中选框后直接 clone。
     *d = DragState {
         x0: x,
         y0: y,
@@ -484,15 +479,11 @@ pub fn begin_selection_move(x: f32, y: f32) -> i32 {
         }
     }
     s.clear_preview_anim();
-    d.drag = prev_drag.or_else(|| crate::selection_materializer::take_drag(&s));
-    d.drag_hidden = d
-        .drag
+    d.drag = s
+        .document
         .as_ref()
-        .map(|drag| std::sync::Arc::clone(&drag.hidden))
-        .or(prev_hidden);
-    if d.drag.is_none() {
-        crate::selection_materializer::schedule_drag(&s);
-    }
+        .map(|doc| std::sync::Arc::new(doc.edit.selected.clone()));
+    d.drag_hidden = None;
     d.kind = kind::MOVE_BOX;
     refresh_preview(&mut d, &mut s);
     bump(&mut s);
@@ -927,9 +918,7 @@ pub fn end(x: f32, y: f32) {
     bump(&mut s);
     drop(s);
     drop(d);
-    if let Some(data) = stale_drag {
-        crate::selection_materializer::drop_drag(data);
-    }
+    drop(stale_drag);
     drop(stale_hidden);
     if !keep_gate {
         crate::audio::stop_preview();
@@ -966,9 +955,7 @@ pub fn cancel() {
         bump(&mut s);
     }
     crate::audio::stop_preview();
-    if let Some(data) = stale_drag {
-        crate::selection_materializer::drop_drag(data);
-    }
+    drop(stale_drag);
     drop(stale_hidden);
 }
 
@@ -1001,15 +988,11 @@ pub fn begin_pr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: To
                 // 进入长按待定；500ms 后由 Flutter long press 推进到移动态。
                 d.kind = kind::PENDING;
                 d.box_ticks = Some(rect);
-                // ghost 来自后台物化缓存；没有就安排物化，结果到了再补上。
-                d.drag = crate::selection_materializer::take_drag(s);
-                d.drag_hidden = d
-                    .drag
+                d.drag = s
+                    .document
                     .as_ref()
-                    .map(|drag| std::sync::Arc::clone(&drag.hidden));
-                if d.drag.is_none() {
-                    crate::selection_materializer::schedule_drag(s);
-                }
+                    .map(|doc| std::sync::Arc::new(doc.edit.selected.clone()));
+                d.drag_hidden = None;
                 d.preview_last_dk = 0;
                 preview_group(s, d, 0, 0);
                 return;
@@ -1117,14 +1100,11 @@ pub fn begin_arr(d: &mut DragState, s: &mut RenderScene, x: f32, y: f32, tool: T
     if let Some(rect) = arr_box_at(s, &geom, x, y) {
         d.kind = kind::PENDING;
         d.box_rows = Some(rect);
-        d.drag = crate::selection_materializer::take_drag(s);
-        d.drag_hidden = d
-            .drag
+        d.drag = s
+            .document
             .as_ref()
-            .map(|drag| std::sync::Arc::clone(&drag.hidden));
-        if d.drag.is_none() {
-            crate::selection_materializer::schedule_drag(s);
-        }
+            .map(|doc| std::sync::Arc::new(doc.edit.selected.clone()));
+        d.drag_hidden = None;
         return;
     }
     // 空白处：长按待定（同上），拖动后转框选。

@@ -230,8 +230,8 @@ pub fn select_all(scope: i32, track: i32) -> i32 {
     // 纯选区变化：不重建轨道/音符快照，也不 bump doc_generation
     //（否则 Dart 会全量重扫力度条与自动化）。
     selection_changed(&mut s);
-    // 不做立即物化：全选保持矩形态，第一次拖动时由 schedule_drag 物化；
-    // move_selected_notes 快路径会在移动时用 NoteBitsetBuilder 收集实际成员。
+    // 不做立即物化：全选保持矩形态；拖动预览按可见 chunk 扫描选区，
+    // 移动时由快路径用 NoteBitsetBuilder 收集实际成员。
     1
 }
 

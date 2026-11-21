@@ -1,3 +1,4 @@
+use super::preview::for_each_selected_in_range;
 use super::*;
 use yinhe_editor_core::Document;
 
@@ -170,22 +171,27 @@ pub fn update_sel_scale(d: &mut DragState, s: &mut RenderScene, x: f32) {
                     .pr_view
                     .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
                 let mut ghost = Vec::new();
-                if let Some(drag) = d.drag.as_ref() {
+                if let Some(selection) = d.drag.as_ref()
+                    && factor > 0.0
+                {
+                    let inv = |v: f64| t0 + (v - t0) / factor;
                     let scale = |v: f64| (t0 + (v - t0) * factor).round().max(t0);
-                    for (key, bucket) in drag.by_key.iter().enumerate() {
-                        if (key as u8) < key_lo || (key as u8) > key_hi {
-                            continue;
-                        }
-                        for &(track, start, end, _vel) in bucket {
-                            let new_start = scale(f64::from(start)) as u32;
-                            let new_end =
-                                (scale(f64::from(end)) as u32).max(new_start.saturating_add(1));
-                            if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
-                                continue;
+                    for_each_selected_in_range(
+                        s,
+                        selection,
+                        inv(tick_lo),
+                        inv(tick_hi),
+                        key_lo,
+                        key_hi,
+                        |note, key| {
+                            let new_start = scale(f64::from(note.start_tick)) as u32;
+                            let new_end = (scale(f64::from(note.end_tick)) as u32)
+                                .max(new_start.saturating_add(1));
+                            if f64::from(new_start) < tick_hi && f64::from(new_end) > tick_lo {
+                                ghost.push((new_start, new_end, key, note.track));
                             }
-                            ghost.push((new_start, new_end, key as u8, track));
-                        }
-                    }
+                        },
+                    );
                 }
                 apply_preview(s, d, std::mem::take(&mut ghost), true);
             }
@@ -208,19 +214,27 @@ pub fn update_sel_scale(d: &mut DragState, s: &mut RenderScene, x: f32) {
                 d.last_ghost = Some(stamp);
                 let (tick_lo, tick_hi) = s.arr_view.visible_tick_range(lw);
                 let mut ghost = Vec::new();
-                if let Some(drag) = d.drag.as_ref() {
+                if let Some(selection) = d.drag.as_ref()
+                    && factor > 0.0
+                {
+                    let inv = |v: f64| t0 + (v - t0) / factor;
                     let scale = |v: f64| (t0 + (v - t0) * factor).round().max(t0);
-                    for (key, bucket) in drag.by_key.iter().enumerate() {
-                        for &(track, start, end, _vel) in bucket {
-                            let new_start = scale(f64::from(start)) as u32;
-                            let new_end =
-                                (scale(f64::from(end)) as u32).max(new_start.saturating_add(1));
-                            if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
-                                continue;
+                    for_each_selected_in_range(
+                        s,
+                        selection,
+                        inv(tick_lo),
+                        inv(tick_hi),
+                        0,
+                        yinhe_types::MAX_KEY,
+                        |note, key| {
+                            let new_start = scale(f64::from(note.start_tick)) as u32;
+                            let new_end = (scale(f64::from(note.end_tick)) as u32)
+                                .max(new_start.saturating_add(1));
+                            if f64::from(new_start) < tick_hi && f64::from(new_end) > tick_lo {
+                                ghost.push((new_start, new_end, key, note.track));
                             }
-                            ghost.push((new_start, new_end, key as u8, track));
-                        }
-                    }
+                        },
+                    );
                 }
                 apply_preview(s, d, std::mem::take(&mut ghost), true);
             }

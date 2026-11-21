@@ -1,5 +1,38 @@
 use super::*;
 
+/// 遍历 `[tick_lo, tick_hi]` 源范围内被选区选中的音符。
+///
+/// 只扫与范围相交的 `NoteBucket` 块；选区判定走 `Selection::accepts_note`
+/// （矩形态 O(rects)，成员态 O(log pages)）。拖动预览不再预先物化 by_key。
+pub(super) fn for_each_selected_in_range(
+    s: &RenderScene,
+    selection: &Selection,
+    tick_lo: f64,
+    tick_hi: f64,
+    key_lo: u8,
+    key_hi: u8,
+    mut f: impl FnMut(&yinhe_types::Note, u8),
+) {
+    let Some(doc) = s.document.as_ref() else {
+        return;
+    };
+    if key_lo > key_hi || !tick_hi.is_finite() || !tick_lo.is_finite() {
+        return;
+    }
+    let lo = tick_lo.max(0.0).floor().min(f64::from(u32::MAX)) as u32;
+    let hi = tick_hi.max(0.0).ceil().min(f64::from(u32::MAX)) as u32;
+    if hi <= lo {
+        return;
+    }
+    for key in key_lo..=key_hi {
+        for note in doc.data.model.key_notes_in_range(key, lo, hi) {
+            if selection.accepts_note(note, key) {
+                f(note, key);
+            }
+        }
+    }
+}
+
 /// 选区整体移动的当前增量：PR 返回 `(tick 差, dk, 0)`，AR 返回 `(tick 差, 0, dtr)`。
 ///
 /// tick 差保留未取整值（选框矩形预览用），ghost/提交再 round；已按选框
@@ -248,35 +281,42 @@ pub fn preview_group(s: &RenderScene, d: &DragState, dt: i64, dk: i32) {
     let Some(doc) = s.document.as_ref() else {
         return;
     };
-    let Some(drag) = d.drag.as_ref() else {
+    let Some(selection) = d.drag.as_ref() else {
         return;
     };
-    let src_lo = (i32::from(key_lo) - dk).clamp(0, 255) as usize;
-    let src_hi = (i32::from(key_hi) - dk).clamp(0, 255) as usize;
+    let src_lo = (i32::from(key_lo) - dk).clamp(0, 255) as u8;
+    let src_hi = (i32::from(key_hi) - dk).clamp(0, 255) as u8;
     let mut notes = Vec::new();
-    for src_key in src_lo..=src_hi {
-        let new_key = (src_key as i32 + dk).clamp(0, 255) as u8;
-        if new_key < key_lo || new_key > key_hi {
-            continue;
-        }
-        for &(track, start, end, velocity) in &drag.by_key[src_key] {
-            let new_start = (i64::from(start) + dt).max(0) as u32;
-            let new_end = new_start.saturating_add(end.saturating_sub(start));
-            if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
-                continue;
+    for_each_selected_in_range(
+        s,
+        selection,
+        tick_lo - dt as f64,
+        tick_hi - dt as f64,
+        src_lo,
+        src_hi,
+        |note, src_key| {
+            let new_key = (i32::from(src_key) + dk).clamp(0, 255) as u8;
+            if new_key < key_lo || new_key > key_hi {
+                return;
             }
-            let Some(t) = doc.data.model.tracks.get(track as usize) else {
-                continue;
+            let new_start = (i64::from(note.start_tick) + dt).max(0) as u32;
+            let len = note.end_tick.saturating_sub(note.start_tick);
+            let new_end = new_start.saturating_add(len);
+            if f64::from(new_start) >= tick_hi || f64::from(new_end) <= tick_lo {
+                return;
+            }
+            let Some(t) = doc.data.model.tracks.get(note.track as usize) else {
+                return;
             };
             notes.push(yinhe_audio::PreviewNoteParams {
                 channel: t.global_channel(),
                 key: new_key,
-                velocity,
+                velocity: note.velocity,
                 target_tick: new_start,
-                duration_ticks: end.saturating_sub(start),
+                duration_ticks: len,
             });
-        }
-    }
+        },
+    );
     crate::audio::preview_notes(notes, true);
 }
 
@@ -286,7 +326,10 @@ pub fn apply_preview(
     ghost: Vec<(u32, u32, u8, u16)>,
     selected: bool,
 ) {
-    if let Some(hidden) = &d.drag_hidden {
+    if let Some(selection) = &d.drag {
+        s.preview
+            .set_hidden_selection(std::sync::Arc::clone(selection));
+    } else if let Some(hidden) = &d.drag_hidden {
         s.preview.set_hidden_arc(std::sync::Arc::clone(hidden));
     } else {
         s.preview.clear_hidden();
@@ -593,14 +636,6 @@ pub fn preview_line(s: &mut RenderScene, d: &mut DragState) {
 }
 
 pub fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
-    // 大选区 ghost 由后台物化：结果到了就补上（按下那一刻可能还没算完）。
-    if d.drag.is_none()
-        && matches!(d.kind, kind::MOVE_BOX | kind::SEL_GATE | kind::SEL_SCALE)
-        && let Some(drag) = crate::selection_materializer::take_drag(s)
-    {
-        d.drag_hidden = Some(std::sync::Arc::clone(&drag.hidden));
-        d.drag = Some(drag);
-    }
     let (x, y) = (d.px, d.py);
     let (lw, lh) = crate::logical_size();
     let snap = scene::SnapCtx::new(s);
@@ -720,23 +755,29 @@ pub fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                             .pr_view
                             .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
                         let mut ghost = Vec::new();
-                        let src_lo = (i32::from(key_lo) - dk).clamp(0, 255) as usize;
-                        let src_hi = (i32::from(key_hi) - dk).clamp(0, 255) as usize;
-                        if let Some(drag) = d.drag.as_ref() {
-                            for src_key in src_lo..=src_hi {
-                                let new_key = (src_key as i32 + dk).clamp(0, 255) as u8;
-                                for &(track, start, end, _vel) in &drag.by_key[src_key] {
-                                    let new_start = (i64::from(start) + dt).max(0) as u32;
-                                    let new_end =
-                                        new_start.saturating_add(end.saturating_sub(start));
-                                    if f64::from(new_start) >= tick_hi
-                                        || f64::from(new_end) <= tick_lo
+                        let src_lo = (i32::from(key_lo) - dk).clamp(0, 255) as u8;
+                        let src_hi = (i32::from(key_hi) - dk).clamp(0, 255) as u8;
+                        if let Some(selection) = d.drag.as_ref() {
+                            for_each_selected_in_range(
+                                s,
+                                selection,
+                                tick_lo - dt as f64,
+                                tick_hi - dt as f64,
+                                src_lo,
+                                src_hi,
+                                |note, src_key| {
+                                    let new_key = (i32::from(src_key) + dk).clamp(0, 255) as u8;
+                                    let new_start = (i64::from(note.start_tick) + dt).max(0) as u32;
+                                    let new_end = new_start.saturating_add(
+                                        note.end_tick.saturating_sub(note.start_tick),
+                                    );
+                                    if f64::from(new_start) < tick_hi
+                                        && f64::from(new_end) > tick_lo
                                     {
-                                        continue;
+                                        ghost.push((new_start, new_end, new_key, note.track));
                                     }
-                                    ghost.push((new_start, new_end, new_key, track));
-                                }
-                            }
+                                },
+                            );
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), true);
                         if dk != d.preview_last_dk {
@@ -779,25 +820,31 @@ pub fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                                 s.num_tracks,
                             );
                         let mut ghost = Vec::new();
-                        if let Some(drag) = d.drag.as_ref() {
-                            for (key, bucket) in drag.by_key.iter().enumerate() {
-                                for &(track, start, end, _vel) in bucket {
-                                    let new_start = (i64::from(start) + dt).max(0) as u32;
-                                    let new_end =
-                                        new_start.saturating_add(end.saturating_sub(start));
+                        if let Some(selection) = d.drag.as_ref() {
+                            for_each_selected_in_range(
+                                s,
+                                selection,
+                                tick_lo - dt as f64,
+                                tick_hi - dt as f64,
+                                0,
+                                yinhe_types::MAX_KEY,
+                                |note, key| {
+                                    let new_start = (i64::from(note.start_tick) + dt).max(0) as u32;
+                                    let new_end = new_start.saturating_add(
+                                        note.end_tick.saturating_sub(note.start_tick),
+                                    );
                                     let new_track =
-                                        (i32::from(track) + dtr).clamp(0, max_row) as u16;
+                                        (i32::from(note.track) + dtr).clamp(0, max_row) as u16;
                                     let row = new_track as usize;
-                                    if row < first_row
-                                        || row >= last_row
-                                        || f64::from(new_start) >= tick_hi
-                                        || f64::from(new_end) <= tick_lo
+                                    if row >= first_row
+                                        && row < last_row
+                                        && f64::from(new_start) < tick_hi
+                                        && f64::from(new_end) > tick_lo
                                     {
-                                        continue;
+                                        ghost.push((new_start, new_end, key, new_track));
                                     }
-                                    ghost.push((new_start, new_end, key as u8, new_track));
-                                }
-                            }
+                                },
+                            );
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), false);
                         let auto_ghost = build_ar_auto_ghost(s, dt, dtr);
@@ -918,20 +965,28 @@ pub fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                             .pr_view
                             .visible_cross_range(s.pr_view.cross_axis_len(lw, lh));
                         let mut ghost = Vec::new();
-                        if let Some(drag) = d.drag.as_ref() {
-                            for (key, bucket) in drag.by_key.iter().enumerate() {
-                                if (key as u8) < key_lo || (key as u8) > key_hi {
-                                    continue;
-                                }
-                                for &(track, start, end, _vel) in bucket {
-                                    let new_end = clamp_gate_end(start, end, dt, min_gate);
-                                    if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo
+                        if let Some(selection) = d.drag.as_ref() {
+                            for_each_selected_in_range(
+                                s,
+                                selection,
+                                tick_lo,
+                                tick_hi,
+                                key_lo,
+                                key_hi,
+                                |note, key| {
+                                    let new_end = clamp_gate_end(
+                                        note.start_tick,
+                                        note.end_tick,
+                                        dt,
+                                        min_gate,
+                                    );
+                                    if f64::from(note.start_tick) < tick_hi
+                                        && f64::from(new_end) > tick_lo
                                     {
-                                        continue;
+                                        ghost.push((note.start_tick, new_end, key, note.track));
                                     }
-                                    ghost.push((start, new_end, key as u8, track));
-                                }
-                            }
+                                },
+                            );
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), true);
                     }
@@ -954,17 +1009,28 @@ pub fn refresh_preview(d: &mut DragState, s: &mut RenderScene) {
                         d.last_ghost = Some(stamp);
                         let (tick_lo, tick_hi) = s.arr_view.visible_tick_range(lw);
                         let mut ghost = Vec::new();
-                        if let Some(drag) = d.drag.as_ref() {
-                            for (key, bucket) in drag.by_key.iter().enumerate() {
-                                for &(track, start, end, _vel) in bucket {
-                                    let new_end = clamp_gate_end(start, end, dt, min_gate);
-                                    if f64::from(start) >= tick_hi || f64::from(new_end) <= tick_lo
+                        if let Some(selection) = d.drag.as_ref() {
+                            for_each_selected_in_range(
+                                s,
+                                selection,
+                                tick_lo,
+                                tick_hi,
+                                0,
+                                yinhe_types::MAX_KEY,
+                                |note, key| {
+                                    let new_end = clamp_gate_end(
+                                        note.start_tick,
+                                        note.end_tick,
+                                        dt,
+                                        min_gate,
+                                    );
+                                    if f64::from(note.start_tick) < tick_hi
+                                        && f64::from(new_end) > tick_lo
                                     {
-                                        continue;
+                                        ghost.push((note.start_tick, new_end, key, note.track));
                                     }
-                                    ghost.push((start, new_end, key as u8, track));
-                                }
-                            }
+                                },
+                            );
                         }
                         apply_preview(s, d, std::mem::take(&mut ghost), true);
                     }

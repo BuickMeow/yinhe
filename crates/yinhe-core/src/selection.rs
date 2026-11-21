@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use yinhe_types::{AutomationEvent, AutomationTarget, MAX_KEY, Note, NoteSource};
+use yinhe_types::{AutomationEvent, AutomationTarget, HiddenFilter, MAX_KEY, Note, NoteSource};
 
 use crate::NoteBitset;
 
@@ -437,7 +437,6 @@ impl Selection {
         }
         hit && self.filter.accepts_note(note, key)
     }
-
     /// 是否设置了任何筛选边界。
     pub fn has_filter(&self) -> bool {
         !self.filter.is_empty()
@@ -552,6 +551,22 @@ impl Selection {
             self.automation_members = None;
             self.materialized_automation_rects = 0;
         }
+    }
+}
+
+/// 选区本身就能回答「这个音符是否要隐藏」：拖动预览无需再物化一份
+/// `HiddenNotes`。矩形态走 rect 判定，成员态走位图。
+impl HiddenFilter for Selection {
+    fn is_hidden(&self, note: &Note, key: u8) -> bool {
+        self.accepts_note(note, key)
+    }
+
+    fn hidden_count(&self) -> u64 {
+        self.explicit_member_count().unwrap_or(0)
+    }
+
+    fn hidden_hash(&self) -> u64 {
+        self.state_hash()
     }
 }
 
@@ -670,6 +685,17 @@ mod tests {
             Some(2),
             "筛选不物化、不收缩成员位图"
         );
+    }
+
+    #[test]
+    fn selection_can_be_used_as_hidden_filter() {
+        let mut sel = Selection::default();
+        sel.add_rect(0, 100, 60, 60);
+        let inside = note_id(1, 0, 50, 100, 0);
+        let outside = note_id(2, 200, 250, 100, 0);
+        assert!(HiddenFilter::is_hidden(&sel, &inside, 60));
+        assert!(!HiddenFilter::is_hidden(&sel, &outside, 60));
+        assert_eq!(HiddenFilter::hidden_hash(&sel), sel.state_hash());
     }
 
     /// 矩形态（未物化）的判定语义与旧版一致。

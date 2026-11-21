@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use yinhe_core::TrackKind;
+use yinhe_core::{Selection, TrackKind};
 use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::NoteSource;
@@ -115,10 +115,10 @@ pub struct DragState {
     end_tick: u32,
     key: u8,
     side: u8,
-    /// 大选区整体拖动的 ghost/隐藏集：后台物化后按 Arc 共享，
-    /// 同一选区反复拖动不重算；单音符拖动保持 `None`。
-    drag: Option<std::sync::Arc<crate::selection_materializer::DragData>>,
-    /// 原位置隐藏集合（大选区时与 `drag.hidden` 相同；单音符拖动单独设置）。
+    /// 大选区整体拖动：起手时的选区快照。预览时按当前可见 chunk 扫描模型，
+    /// 不再预物化 by_key / HiddenNotes。
+    drag: Option<std::sync::Arc<Selection>>,
+    /// 原位置隐藏集合（单音符拖动 / 铅笔 / 刷子单独设置）。
     drag_hidden: Option<std::sync::Arc<yinhe_types::HiddenNotes>>,
     /// 整体拖动上一次 ghost 的 `(dt, dk, 视图 hash)`；未变化时跳过重建。
     last_ghost: Option<(i64, i32, u64)>,

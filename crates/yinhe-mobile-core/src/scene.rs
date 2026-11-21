@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use yinhe_core::YinModel;
+use yinhe_core::{Selection, YinModel};
 use yinhe_editor_core::Document;
 use yinhe_editor_core::clipboard::{AutomationClip, NotesClipboard, PasteMode};
 use yinhe_editor_core::follow::total_ticks_padded;
@@ -156,6 +156,8 @@ pub struct AutoGhostLane {
 pub struct DragPreview {
     pub ghost: Arc<Vec<(u32, u32, u8, u16)>>,
     pub hidden: Arc<HiddenNotes>,
+    /// 选区拖动时的隐藏集合：直接用 Selection 判定，避免物化 1 bit/音符。
+    pub hidden_selection: Option<Arc<Selection>>,
     /// AR 自动化竖线 ghost（跟随选框移动）。
     pub auto_ghost: Arc<Vec<AutoGhostLane>>,
     /// hidden 集合的稳定 hash；只在 hidden 真正变化时重算。
@@ -182,23 +184,52 @@ impl DragPreview {
     }
 
     pub fn set_hidden_arc(&mut self, hidden: Arc<HiddenNotes>) {
-        if Arc::ptr_eq(&self.hidden, &hidden) {
+        if self.hidden_selection.is_none() && Arc::ptr_eq(&self.hidden, &hidden) {
             return;
         }
         let hash = hidden.hidden_hash();
-        if hash == self.hidden_hash && hidden.hidden_count() == self.hidden.hidden_count() {
+        if self.hidden_selection.is_none()
+            && hash == self.hidden_hash
+            && hidden.hidden_count() == self.hidden.hidden_count()
+        {
             return;
         }
         self.hidden = hidden;
+        self.hidden_selection = None;
         self.hidden_hash = hash;
         self.revision = self.revision.wrapping_add(1);
     }
 
-    pub fn clear_hidden(&mut self) {
-        if self.hidden.is_empty() && self.hidden_hash == 0 {
+    /// 选区拖动：用 Selection 直接作为隐藏过滤器，不物化 HiddenNotes。
+    pub fn set_hidden_selection(&mut self, selection: Arc<Selection>) {
+        let hash = selection.state_hash();
+        if self
+            .hidden_selection
+            .as_ref()
+            .is_some_and(|cur| cur.state_hash() == hash)
+        {
             return;
         }
         self.hidden = Arc::new(HiddenNotes::default());
+        self.hidden_selection = Some(selection);
+        self.hidden_hash = hash;
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// 当前生效的隐藏过滤器（单音符拖动 / 选区拖动二选一）。
+    pub fn hidden_filter(&self) -> &dyn HiddenFilter {
+        match &self.hidden_selection {
+            Some(selection) => selection.as_ref(),
+            None => self.hidden.as_ref(),
+        }
+    }
+
+    pub fn clear_hidden(&mut self) {
+        if self.hidden.is_empty() && self.hidden_selection.is_none() && self.hidden_hash == 0 {
+            return;
+        }
+        self.hidden = Arc::new(HiddenNotes::default());
+        self.hidden_selection = None;
         self.hidden_hash = 0;
         self.revision = self.revision.wrapping_add(1);
     }
@@ -206,10 +237,12 @@ impl DragPreview {
     pub fn clear(&mut self) {
         let had = !self.ghost.is_empty()
             || !self.hidden.is_empty()
+            || self.hidden_selection.is_some()
             || !self.auto_ghost.is_empty()
             || self.selected;
         self.ghost = Arc::new(Vec::new());
         self.hidden = Arc::new(HiddenNotes::default());
+        self.hidden_selection = None;
         self.hidden_hash = 0;
         self.auto_ghost = Arc::new(Vec::new());
         self.selected = false;

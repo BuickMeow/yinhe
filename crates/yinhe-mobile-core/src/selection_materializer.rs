@@ -1,27 +1,18 @@
-//! 选区成员位图 + 拖动 ghost 数据的异步物化。
+//! 选区成员位图的异步物化。
 //!
 //! 框选/缩放控制点松手时先把矩形选框交给 Flutter 绘制；成员位图（按 note id）
 //! 在后台线程扫描，算完后回到场景。这样大选区不会卡住 UI，同时后续移动/复制
 //! 仍使用显式 id 集合，不会把移动后才进入矩形的音符误带进来。
 //!
-//! 拖动 ghost（按 key 分桶的音符 + 原位置隐藏集）**按需**在第一次按下选框时
-//! 后台计算并缓存：选区松手就全量算会在用户只是框选时白占几百 MB。
+//! 拖动 ghost 不再依赖这里：选区本身（`Selection`）就可以作为隐藏过滤器，
+//! 预览时按可见 chunk 扫描模型即可，不需要 by_key 全量缓存。
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock};
 
-use yinhe_core::{Selection, YinModel};
-use yinhe_types::NoteSource;
+use yinhe_core::Selection;
 
-use crate::edit::DragByKey;
 use crate::scene::RenderScene;
-
-/// 选区整体拖动所需的数据：按 key 分桶的 `(track, start, end, velocity)`，
-/// 以及原位置隐藏集合（拖动时把原音符藏起来）。
-pub struct DragData {
-    pub by_key: DragByKey,
-    pub hidden: Arc<yinhe_types::HiddenNotes>,
-}
 
 struct Pending {
     generation: u64,
@@ -30,89 +21,19 @@ struct Pending {
     selection: Selection,
 }
 
-struct CachedDrag {
-    generation: u64,
-    revision: u64,
-    rects: Vec<(u32, u32, u8, u8, u16, u16)>,
-    filter: yinhe_core::SelectionFilter,
-    data: Arc<DragData>,
-}
-
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 static RESULT: OnceLock<Mutex<Option<Pending>>> = OnceLock::new();
-static DRAG: OnceLock<Mutex<Option<CachedDrag>>> = OnceLock::new();
-/// 正在后台构建 ghost 的 generation（`NO_IN_FLIGHT` = 空闲）。
-///
-/// 同一选区连续按下时只允许一份全量 `collect` 在跑；否则每份 `by_key`
-/// 都是 12B/选中音符，亿级选区会并发出多份 GB 级内存。
-const NO_IN_FLIGHT: u64 = u64::MAX;
-static DRAG_IN_FLIGHT: AtomicU64 = AtomicU64::new(NO_IN_FLIGHT);
-
-struct InFlightGuard(u64);
-
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        let _ = DRAG_IN_FLIGHT.compare_exchange(
-            self.0,
-            NO_IN_FLIGHT,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        );
-    }
-}
-
-/// 大 ghost 缓存的析构可能包含 GB 级 Vec/BTreeMap 释放；转到一个常驻后台
-/// 线程做，避免在 UI 线程或 scene 锁内 munmap。
-type GarbageTx = std::sync::mpsc::Sender<Arc<DragData>>;
-static GARBAGE_TX: OnceLock<Option<GarbageTx>> = OnceLock::new();
-
-fn drop_in_background(data: Arc<DragData>) {
-    let slot = GARBAGE_TX.get_or_init(|| {
-        let (tx, rx) = std::sync::mpsc::channel::<Arc<DragData>>();
-        let spawned = std::thread::Builder::new()
-            .name("yinhe-ghost-drop".into())
-            .spawn(move || {
-                while let Ok(data) = rx.recv() {
-                    drop(data);
-                }
-            });
-        if spawned.is_ok() { Some(tx) } else { None }
-    });
-    match slot {
-        Some(tx) => {
-            if let Err(e) = tx.send(data) {
-                drop(e.0);
-            }
-        }
-        None => drop(data),
-    }
-}
-
-/// 把一份拖动 ghost 数据交给后台线程释放。
-pub fn drop_drag(data: Arc<DragData>) {
-    drop_in_background(data);
-}
-
-fn drop_cached(cached: Option<CachedDrag>) {
-    if let Some(CachedDrag { data, .. }) = cached {
-        drop_drag(data);
-    }
-}
 
 fn result_slot() -> &'static Mutex<Option<Pending>> {
     RESULT.get_or_init(|| Mutex::new(None))
 }
 
-fn drag_slot() -> &'static Mutex<Option<CachedDrag>> {
-    DRAG.get_or_init(|| Mutex::new(None))
-}
-
 /// 历史操作（undo/redo）或选区被替换前作废尚未应用的结果，避免旧数据覆盖新状态。
 pub fn invalidate() {
     GENERATION.fetch_add(1, Ordering::Relaxed);
-    // 大选区 ghost 可能有数百 MB～GB：交给后台线程析构，避免在锁内 munmap。
-    let stale = drag_slot().lock().ok().and_then(|mut slot| slot.take());
-    drop_cached(stale);
+    // 位图可能有几十 MB：take 出来在锁外析构。
+    let stale = result_slot().lock().ok().and_then(|mut slot| slot.take());
+    drop(stale);
 }
 
 /// 安排异步物化当前矩形选区的成员位图。重复调用会让旧任务的结果作废。
@@ -123,9 +44,6 @@ pub fn schedule(s: &RenderScene) {
     if doc.edit.selected.is_empty() || doc.edit.selected.has_explicit_members() {
         return;
     }
-    // 选区已变：上一份 ghost 数据不再适用，顺手释放（可能有几百 MB）。
-    let stale = drag_slot().lock().ok().and_then(|mut slot| slot.take());
-    drop_cached(stale);
     let selection = doc.edit.selected.clone();
     let rects = selection.rects.clone();
     let filter = selection.filter.clone();
@@ -148,81 +66,6 @@ pub fn schedule(s: &RenderScene) {
     });
 }
 
-/// 按需后台计算拖动 ghost 数据（按下已有选框时调用）。
-///
-/// 结果按 `(generation, revision, 选区矩形/筛选)` 缓存；同一选区反复拖动直接
-/// 复用（Arc），只有文档内容或选区变化才重算。结果未就绪时拖动预览会晚几帧
-/// 出现，但不会阻塞 UI。
-pub fn schedule_drag(s: &RenderScene) {
-    let Some(doc) = s.document.as_ref() else {
-        return;
-    };
-    if doc.edit.selected.is_empty() {
-        return;
-    }
-    let selection = doc.edit.selected.clone();
-    let rects = selection.rects.clone();
-    let filter = selection.filter.clone();
-    let model = doc.data.model.clone();
-    let revision = doc.data.revision;
-    let generation = GENERATION.load(Ordering::Relaxed);
-    if DRAG_IN_FLIGHT.load(Ordering::Relaxed) == generation {
-        return;
-    }
-    DRAG_IN_FLIGHT.store(generation, Ordering::Relaxed);
-    std::thread::spawn(move || {
-        let _in_flight = InFlightGuard(generation);
-        // 选区还没物化成成员位图时，先在后台补物化再收集；全部在子线程完成。
-        let selection = if selection.has_explicit_members() {
-            selection
-        } else {
-            let mut materialized = selection;
-            materialized.materialize_pending(&*model);
-            materialized
-        };
-        if GENERATION.load(Ordering::Relaxed) != generation {
-            return;
-        }
-        let (by_key, hidden) = collect(&model, &selection);
-        if GENERATION.load(Ordering::Relaxed) != generation {
-            return;
-        }
-        let stale = if let Ok(mut slot) = drag_slot().lock() {
-            let stale = slot.take();
-            *slot = Some(CachedDrag {
-                generation,
-                revision,
-                rects,
-                filter,
-                data: Arc::new(DragData {
-                    by_key,
-                    hidden: Arc::new(hidden),
-                }),
-            });
-            stale
-        } else {
-            None
-        };
-        drop_cached(stale);
-    });
-}
-
-/// 取当前选区对应的拖动 ghost 数据；缓存缺失/过期时返回 `None`（调用方应
-/// `schedule_drag` 等待后台，而不是在 UI 线程同步重扫）。
-pub fn take_drag(s: &RenderScene) -> Option<Arc<DragData>> {
-    let doc = s.document.as_ref()?;
-    let slot = drag_slot().lock().ok()?;
-    let cached = slot.as_ref()?;
-    if cached.generation != GENERATION.load(Ordering::Relaxed)
-        || cached.revision != doc.data.revision
-        || doc.edit.selected.rects != cached.rects
-        || doc.edit.selected.filter != cached.filter
-    {
-        return None;
-    }
-    Some(Arc::clone(&cached.data))
-}
-
 /// 在渲染/编辑入口应用已完成的结果；选区或模型已经变化时丢弃。
 pub fn apply_pending(s: &mut RenderScene) {
     let Some(pending) = result_slot().lock().ok().and_then(|mut slot| slot.take()) else {
@@ -240,46 +83,4 @@ pub fn apply_pending(s: &mut RenderScene) {
         return;
     }
     doc.edit.selected = pending.selection;
-}
-
-/// 扫描选区内的音符，产出拖动 ghost 数据。
-///
-/// 单矩形（绝大多数框选/全选）不会跨矩形重复产出音符：音符在桶内按 start
-/// 排序，只需和同 key 上一个已接受的音符比较，避免百万级 HashSet。
-fn collect(model: &YinModel, selection: &Selection) -> (DragByKey, yinhe_types::HiddenNotes) {
-    use std::collections::HashSet;
-
-    let mut by_key: DragByKey = (0..yinhe_types::KEY_COUNT).map(|_| Vec::new()).collect();
-    let mut hidden = yinhe_types::HiddenNotesBuilder::new();
-    let single_rect = selection.rects.len() == 1;
-    let mut seen = HashSet::new();
-    let mut last_start: Vec<Option<(u16, u32)>> = vec![None; yinhe_types::KEY_COUNT];
-    for &(t0, t1, klo, khi, _, _) in &selection.rects {
-        let (ts, te) = (t0.min(t1), t0.max(t1));
-        if te <= ts {
-            continue;
-        }
-        for key in klo..=khi {
-            for n in model.key_notes_in_range(key, ts, te) {
-                if n.start_tick < ts || n.start_tick >= te {
-                    continue;
-                }
-                if !selection.accepts_note(n, key) {
-                    continue;
-                }
-                if single_rect {
-                    let slot = &mut last_start[key as usize];
-                    if *slot == Some((n.track, n.start_tick)) {
-                        continue;
-                    }
-                    *slot = Some((n.track, n.start_tick));
-                } else if !seen.insert((n.track, n.start_tick, key)) {
-                    continue;
-                }
-                by_key[key as usize].push((n.track, n.start_tick, n.end_tick, n.velocity));
-                hidden.insert(n.id, key);
-            }
-        }
-    }
-    (by_key, hidden.build())
 }
