@@ -755,7 +755,7 @@ M1~M3 合入后，用同一 bench 跑真实 `*_at` 路径（不再用原型）�
 | M1 | `NoteBucket::locate_at` + `update_at` + `remove_at` + 单元测试/对拍；模型层 `apply_note_stat_delta` 增量统计 | M0 通过 | 已完成 |
 | M2 | 模型层 `*_at` API；迁移铅笔/力度/单删/`set_note_end_tick`；删除无条件 sort 和单点 `rebuild_dirty`；`try_alloc_note_id` + 总量 guard；`note_count` 等计数统一 u32 | M1 | 已完成 |
 | M3 | `delete_notes` / `move_clip` / `loop_clip_*` 批量化；COW 范围测试 | M2 | 已完成 |
-| M4 | 复跑 bench 对比，确认目标；清理旧单点 by-id API | M3 | 已完成；移动 10M 208µs 未达 100µs，其余达标 |
+| M4 | 复跑 bench 对比，确认目标；旧单点 by-id API 审计为测试/基准专用并标注 | M3 | 已完成；移动 10M 208µs 未达 100µs，其余达标 |
 | M5 | S3-1 注释/断言；关闭 LOD 时跳过摘要构建/上传；S3-4 `insert_batch_sorted` 流式归并 | 可与 M1~M4 并行 | 已完成 |
 | M6 | S3-2/S3-3：8 档仍全量常驻，只做逐档构建/上传峰值优化和逐 key 重建评估 | M5 | 先测后估 |
 | M7 | S3-5 undo delta：100M 已测；先做 16B `UndoNote`；列式 7.87B 已接受，必须带进度条 + 按 key 流式恢复 | M0 数据 | 待定 |
