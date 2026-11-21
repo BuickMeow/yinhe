@@ -61,6 +61,44 @@ impl Drop for InFlightGuard {
     }
 }
 
+/// 大 ghost 缓存的析构可能包含 GB 级 Vec/BTreeMap 释放；转到一个常驻后台
+/// 线程做，避免在 UI 线程或 scene 锁内 munmap。
+type GarbageTx = std::sync::mpsc::Sender<Arc<DragData>>;
+static GARBAGE_TX: OnceLock<Option<GarbageTx>> = OnceLock::new();
+
+fn drop_in_background(data: Arc<DragData>) {
+    let slot = GARBAGE_TX.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<Arc<DragData>>();
+        let spawned = std::thread::Builder::new()
+            .name("yinhe-ghost-drop".into())
+            .spawn(move || {
+                while let Ok(data) = rx.recv() {
+                    drop(data);
+                }
+            });
+        if spawned.is_ok() { Some(tx) } else { None }
+    });
+    match slot {
+        Some(tx) => {
+            if let Err(e) = tx.send(data) {
+                drop(e.0);
+            }
+        }
+        None => drop(data),
+    }
+}
+
+/// 把一份拖动 ghost 数据交给后台线程释放。
+pub fn drop_drag(data: Arc<DragData>) {
+    drop_in_background(data);
+}
+
+fn drop_cached(cached: Option<CachedDrag>) {
+    if let Some(CachedDrag { data, .. }) = cached {
+        drop_drag(data);
+    }
+}
+
 fn result_slot() -> &'static Mutex<Option<Pending>> {
     RESULT.get_or_init(|| Mutex::new(None))
 }
@@ -72,9 +110,9 @@ fn drag_slot() -> &'static Mutex<Option<CachedDrag>> {
 /// 历史操作（undo/redo）或选区被替换前作废尚未应用的结果，避免旧数据覆盖新状态。
 pub fn invalidate() {
     GENERATION.fetch_add(1, Ordering::Relaxed);
-    // 大选区 ghost 可能有数百 MB～GB：先 take 出来，在锁外析构。
+    // 大选区 ghost 可能有数百 MB～GB：交给后台线程析构，避免在锁内 munmap。
     let stale = drag_slot().lock().ok().and_then(|mut slot| slot.take());
-    drop(stale);
+    drop_cached(stale);
 }
 
 /// 安排异步物化当前矩形选区的成员位图。重复调用会让旧任务的结果作废。
@@ -87,7 +125,7 @@ pub fn schedule(s: &RenderScene) {
     }
     // 选区已变：上一份 ghost 数据不再适用，顺手释放（可能有几百 MB）。
     let stale = drag_slot().lock().ok().and_then(|mut slot| slot.take());
-    drop(stale);
+    drop_cached(stale);
     let selection = doc.edit.selected.clone();
     let rects = selection.rects.clone();
     let filter = selection.filter.clone();
@@ -165,7 +203,7 @@ pub fn schedule_drag(s: &RenderScene) {
         } else {
             None
         };
-        drop(stale);
+        drop_cached(stale);
     });
 }
 

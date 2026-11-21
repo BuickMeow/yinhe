@@ -927,7 +927,9 @@ pub fn end(x: f32, y: f32) {
     bump(&mut s);
     drop(s);
     drop(d);
-    drop(stale_drag);
+    if let Some(data) = stale_drag {
+        crate::selection_materializer::drop_drag(data);
+    }
     drop(stale_hidden);
     if !keep_gate {
         crate::audio::stop_preview();
@@ -964,7 +966,9 @@ pub fn cancel() {
         bump(&mut s);
     }
     crate::audio::stop_preview();
-    drop(stale_drag);
+    if let Some(data) = stale_drag {
+        crate::selection_materializer::drop_drag(data);
+    }
     drop(stale_hidden);
 }
 
