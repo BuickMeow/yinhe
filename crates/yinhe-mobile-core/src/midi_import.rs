@@ -68,15 +68,10 @@ pub fn start(path: String) -> i32 {
                 &path,
                 yinhe_midi::MidiImportEncoding::Utf8,
                 |p| {
-                    let frac = if p.total_tracks > 0 {
-                        p.current_track as f32 / p.total_tracks as f32
-                    } else {
-                        0.0
-                    };
                     if let Ok(mut st) = slot().lock()
                         && st.token == token
                     {
-                        st.progress = (0.02 + frac * 0.93).clamp(0.0, 1.0);
+                        st.progress = (0.02 + p.fraction.clamp(0.0, 1.0) * 0.93).clamp(0.0, 1.0);
                     }
                 },
             );

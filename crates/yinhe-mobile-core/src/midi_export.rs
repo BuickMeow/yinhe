@@ -2,7 +2,7 @@
 
 use std::sync::{Mutex, OnceLock};
 
-use yinhe_midi::{MidiExportOptions, MidiImportEncoding, write_to_file};
+use yinhe_midi::{MidiExportOptions, MidiImportEncoding, write_to_file_with_progress};
 
 struct Status {
     /// 0=空闲、1=导出中、2=完成、3=失败
@@ -47,7 +47,12 @@ pub fn start(path: String, opts_json: &str) -> i32 {
 
     let opts = parse_options(opts_json);
     std::thread::spawn(move || {
-        let result = write_to_file(&model, &path, &opts).map_err(|e| e.to_string());
+        let result = write_to_file_with_progress(&model, &path, &opts, |p| {
+            if let Ok(mut st) = status_slot().lock() {
+                st.progress = p.fraction().clamp(0.0, 1.0);
+            }
+        })
+        .map_err(|e| e.to_string());
         if let Ok(mut st) = status_slot().lock() {
             match result {
                 Ok(()) => {

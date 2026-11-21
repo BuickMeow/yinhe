@@ -1236,3 +1236,47 @@ fn export_progress_advances_within_same_tick_chord() {
         "同 tick 大和弦也应有中间进度：{samples:?}"
     );
 }
+
+/// 单轨黑乐谱解析必须按 NoteOn 数持续前进，不能只在“完成 1/1 条轨”时
+/// 从 0 跳到 80%。
+#[test]
+fn parse_progress_advances_within_single_track() {
+    let mut model = YinModel::new_empty_with_16_tracks();
+    let notes: Vec<NoteEvent> = (0..200_000u32)
+        .map(|i| NoteEvent {
+            id: 0,
+            start_tick: i / 12,
+            end_tick: i / 12 + 10,
+            key: 60 + (i % 12) as u8,
+            velocity: 100,
+        })
+        .collect();
+    model.load_track_notes(vec![notes]);
+    model.rebuild();
+
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    yinhe_midi::write_to_writer(&model, &MidiExportOptions::default(), &mut bytes).expect("export");
+    let mut samples = Vec::new();
+    let parsed = yinhe_midi::parse_bytes_with_encoding(
+        bytes.get_ref(),
+        yinhe_midi::MidiImportEncoding::Utf8,
+        |p| samples.push(p),
+    )
+    .expect("parse");
+
+    assert_eq!(parsed.note_count, 200_000);
+    assert!(
+        samples.windows(2).all(|w| w[1].fraction >= w[0].fraction),
+        "解析进度必须单调：{samples:?}"
+    );
+    assert!(
+        samples.iter().any(|p| {
+            p.notes_done > 0
+                && p.notes_done < p.notes_total
+                && p.fraction > 0.05
+                && p.fraction < 0.80
+        }),
+        "单轨解析也应有 NoteOn 级中间进度：{samples:?}"
+    );
+    assert_eq!(samples.last().expect("progress").fraction, 1.0);
+}

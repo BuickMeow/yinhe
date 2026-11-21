@@ -46,6 +46,8 @@ impl Default for MidiExportOptions {
 pub enum MidiExportStage {
     /// 扫描模型、按轨道收集紧凑音符索引。
     Indexing,
+    /// 逐轨排序并对重叠音符去重（失败路径不影响进度）。
+    Dedup,
     /// 逐轨排序并写出事件。
     Writing,
 }
@@ -64,12 +66,13 @@ pub struct MidiExportProgress {
 }
 
 impl MidiExportProgress {
-    /// 0..1 进度：索引占前 40%，写出占后 60%。
+    /// 0..1 进度：索引 40%，去重 10%，写出 50%。
     pub fn fraction(self) -> f32 {
         let ratio = (self.notes_done as f32 / self.notes_total.max(1) as f32).min(1.0);
         match self.stage {
             MidiExportStage::Indexing => ratio * 0.4,
-            MidiExportStage::Writing => 0.4 + ratio * 0.6,
+            MidiExportStage::Dedup => 0.4 + ratio * 0.1,
+            MidiExportStage::Writing => 0.5 + ratio * 0.5,
         }
     }
 }
@@ -164,8 +167,27 @@ pub fn write_to_writer_with_progress<W: Write>(
     });
 
     if opts.dedup_overlaps {
+        let dedup_total = actual_notes;
+        let mut dedup_done = 0u64;
         for notes in &mut per_track_notes {
-            dedup_note_index(notes);
+            let scanned = notes.len() as u64;
+            dedup_note_index(notes, |done| {
+                progress(MidiExportProgress {
+                    stage: MidiExportStage::Dedup,
+                    notes_done: dedup_done + done,
+                    notes_total: dedup_total,
+                    track_index: 0,
+                    total_tracks,
+                });
+            });
+            dedup_done += scanned;
+            progress(MidiExportProgress {
+                stage: MidiExportStage::Dedup,
+                notes_done: dedup_done,
+                notes_total: dedup_total,
+                track_index: 0,
+                total_tracks,
+            });
         }
     }
 
@@ -351,8 +373,9 @@ fn build_note_index(
 }
 
 /// `dedup_overlaps`：丢弃同 key 上与上一个音符重叠的音符。
-fn dedup_note_index(notes: &mut Vec<NoteRef>) {
+fn dedup_note_index(notes: &mut Vec<NoteRef>, mut on_scan: impl FnMut(u64)) {
     if notes.len() <= 1 {
+        on_scan(notes.len() as u64);
         return;
     }
     // 桶内只保证 start_tick 有序，同 start 的 end 顺序不定；按
@@ -363,6 +386,9 @@ fn dedup_note_index(notes: &mut Vec<NoteRef>) {
     let mut last_key = 0u8;
     let mut last_end = 0u32;
     for read in 0..notes.len() {
+        if read as u64 % PROGRESS_NOTE_INTERVAL == 0 {
+            on_scan(read as u64);
+        }
         let n = notes[read];
         if write > 0 && n.key == last_key && n.start_tick < last_end {
             continue;
@@ -372,7 +398,9 @@ fn dedup_note_index(notes: &mut Vec<NoteRef>) {
         notes[write] = n;
         write += 1;
     }
+    let scanned = notes.len() as u64;
     notes.truncate(write);
+    on_scan(scanned);
 }
 
 /// 逐轨流式写一条音符轨：音符与非音符事件按 tick 归并，边归并边编码。

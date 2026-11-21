@@ -83,6 +83,24 @@ impl YinModel {
         self.rebuild_stats_only();
     }
 
+    /// 全量 bump 每个 key 的 revision，不做排序/统计。
+    ///
+    /// 用于 `NoteLoader::finish` 之后：loader 已经写入完整统计与有序桶，
+    /// 只需要让渲染/缓存消费者知道所有 key 都换了内容。
+    pub fn bump_all_note_revisions(&mut self) {
+        for r in &mut self.note_revisions {
+            *r = r.wrapping_add(1);
+        }
+    }
+
+    /// 按当前 conductor 重建 tempo map（时间轴/跳转区间）。
+    ///
+    /// `NoteLoader::finish` 只写音符与统计，不碰 tempo map；加载路径
+    /// 在统计已完整时调用本方法即可，不必跑全量 `rebuild_stats_only`。
+    pub fn refresh_tempo_map(&mut self) {
+        self.tempo_map = Arc::new(self.build_tempo_map());
+    }
+
     /// 只重建统计与 revision，不排序。
     ///
     /// 用于不破坏桶内 `start_tick` 顺序的结构变更（轨道重映射、轨号平移等：
@@ -373,35 +391,47 @@ impl YinModel {
         // cancel 检测在每个 bucket 开始前；正在跑的不能中断。
         use rayon::prelude::*;
         let done = std::sync::Arc::new(AtomicU32::new(0));
+        let weights: Vec<u64> = model.notes.iter().map(|b| b.len() as u64).collect();
+        let total_notes: u64 = weights.iter().sum();
+        let notes_done = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let progress_clone = progress.clone();
         let cancel_clone = cancel.clone();
         let pause_clone = pause.clone();
-        model.notes.par_iter_mut().for_each(|bucket| {
-            while pause_clone.load(Ordering::Relaxed) {
+        model
+            .notes
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(key, bucket)| {
+                while pause_clone.load(Ordering::Relaxed) {
+                    if cancel_clone.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
                 if cancel_clone.load(Ordering::Relaxed) {
                     return;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            if cancel_clone.load(Ordering::Relaxed) {
-                return;
-            }
-            let bucket = Arc::make_mut(bucket);
-            for n in bucket.iter_mut() {
-                n.start_tick = scale_tick(n.start_tick);
-                n.end_tick = scale_tick(n.end_tick);
-                if n.end_tick <= n.start_tick {
-                    n.end_tick = n.start_tick.saturating_add(1);
+                let bucket = Arc::make_mut(bucket);
+                for n in bucket.iter_mut() {
+                    n.start_tick = scale_tick(n.start_tick);
+                    n.end_tick = scale_tick(n.end_tick);
+                    if n.end_tick <= n.start_tick {
+                        n.end_tick = n.start_tick.saturating_add(1);
+                    }
                 }
-            }
-            bucket.sort();
-            bucket.rebuild_max_ends();
-            let d = done.fetch_add(1, Ordering::Relaxed) + 1;
-            if let Ok(mut p) = progress_clone.lock() {
-                p.progress = d as f32 / KEY_COUNT as f32 * 0.9;
-                p.label = format!("缩放音符 {}/{KEY_COUNT}", d);
-            }
-        });
+                bucket.sort();
+                bucket.rebuild_max_ends();
+                let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+                let n = notes_done.fetch_add(weights[key], Ordering::Relaxed) + weights[key];
+                if let Ok(mut p) = progress_clone.lock() {
+                    p.progress = n as f32 / total_notes.max(1) as f32 * 0.9;
+                    p.label = format!(
+                        "缩放音符 {}/{total_notes}（key {}/{KEY_COUNT}）",
+                        n.min(total_notes),
+                        d
+                    );
+                }
+            });
         if cancel.load(Ordering::Relaxed) {
             return Err("已取消".to_string());
         }
@@ -459,7 +489,21 @@ impl YinModel {
             return Err("已取消".to_string());
         }
 
-        // ── 阶段 3：缩放 track automation + PC（99%）──
+        // ── 阶段 3：缩放 track automation + PC（95..99%）──
+        let total_events: u64 = model
+            .tracks
+            .iter()
+            .map(|t| {
+                t.automation_lanes
+                    .iter()
+                    .map(|l| l.events.len() as u64)
+                    .sum::<u64>()
+                    + t.program_change.len() as u64
+                    + t.lyrics.len() as u64
+                    + t.chord.len() as u64
+            })
+            .sum();
+        let mut events_done = 0u64;
         for track in model.tracks.iter_mut() {
             if cancel.load(Ordering::Relaxed) {
                 return Err("已取消".to_string());
@@ -470,24 +514,42 @@ impl YinModel {
                     ev.tick = scale_tick(ev.tick);
                 }
                 lane.events.sort_by_key(|e| e.tick);
+                events_done += lane.events.len() as u64;
+                if let Ok(mut p) = progress.lock() {
+                    p.progress = 0.95 + events_done as f32 / total_events.max(1) as f32 * 0.04;
+                    p.label = format!("缩放自动化 {events_done}/{total_events}");
+                }
             }
             for pc in track.program_change.iter_mut() {
                 pc.tick = scale_tick(pc.tick);
             }
             track.program_change.sort_by_key(|e| e.tick);
+            events_done += track.program_change.len() as u64;
             for ev in track.lyrics.iter_mut() {
                 ev.tick = scale_tick(ev.tick);
             }
             track.lyrics.sort_by_key(|e| e.tick);
+            events_done += track.lyrics.len() as u64;
             for ev in track.chord.iter_mut() {
                 ev.tick = scale_tick(ev.tick);
             }
             track.chord.sort_by_key(|e| e.tick);
+            events_done += track.chord.len() as u64;
+        }
+        if let Ok(mut p) = progress.lock() {
+            p.progress = 0.99;
+            p.label = format!("缩放自动化 {events_done}/{total_events}");
         }
 
-        // ── 阶段 4：更新 ppq + rebuild（100%）──
+        // ── 阶段 4：更新 ppq + 重算统计（100%）──
+        // tick 缩放是单调映射，桶内顺序不变；只需重算统计/tempo map，
+        // 不必再跑一遍全量 is_sorted + sort。
         model.meta.ppq = new_ppq;
-        model.rebuild();
+        if let Ok(mut p) = progress.lock() {
+            p.progress = 0.99;
+            p.label = "重算索引".to_string();
+        }
+        model.rebuild_stats_only();
         if let Ok(mut p) = progress.lock() {
             p.progress = 1.0;
             p.label = "完成".to_string();
@@ -608,19 +670,31 @@ impl NoteLoader {
     ///
     /// 逐桶 take → 排序 → 分块 → 立即写入模型：已处理桶的源 Vec 随即释放，
     /// 峰值内存 ≈ 单桶两份，而不是全部桶两份（1.64 亿音符省 ~2.6GB）。
-    pub fn finish(mut self, model: &mut YinModel) {
+    pub fn finish(self, model: &mut YinModel) {
+        self.finish_with_progress(model, |_| {});
+    }
+
+    /// 同 [`finish`](Self::finish)，按**已写回音符数**回报进度。
+    ///
+    /// 排序本身是单次库调用，无法在桶内分片；因此以桶为采样点，
+    /// 但 done/total 始终是真实音符数，不是 key 下标。
+    pub fn finish_with_progress(mut self, model: &mut YinModel, mut on_notes: impl FnMut(u64)) {
         if self.max_id_seen + 1 > self.next_note_id {
             self.next_note_id = self.max_id_seen + 1;
         }
         model.next_note_id = self.next_note_id;
 
+        let total = self.note_count;
+        let mut done = 0u64;
         for key in 0..KEY_COUNT {
             let mut v = std::mem::take(&mut self.key_notes[key]);
             // 加载路径统一在此排序（乱序输入），随后按 65536 切块。
             // 同 start_tick 的音符顺序不影响音乐/渲染；不稳定排序避免为
             // 数千万音符再申请一份 O(N) 的稳定排序临时缓冲。
+            done += v.len() as u64;
             v.sort_unstable_by_key(|n| n.start_tick);
             model.notes[key] = Arc::new(NoteBucket::from_sorted(v));
+            on_notes(done.min(total));
         }
         model.note_count = self.note_count;
         model.tick_length = self.max_tick;

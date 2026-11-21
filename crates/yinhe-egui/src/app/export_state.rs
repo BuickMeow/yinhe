@@ -243,6 +243,6 @@ mod midi_export_tests {
             track_index: 1,
             total_tracks: 4,
         });
-        assert!((src.fraction() - 0.7).abs() < 1e-6);
+        assert!((src.fraction() - 0.75).abs() < 1e-6);
     }
 }

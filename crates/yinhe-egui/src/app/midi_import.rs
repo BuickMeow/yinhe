@@ -76,12 +76,10 @@ impl App {
             .stack_size(32 * 1024 * 1024)
             .spawn(move || {
                 let result = yinhe_midi::parse_file_with_encoding(&worker_path, encoding, |pr| {
-                    let f = if pr.total_tracks > 0 {
-                        pr.current_track as f32 / pr.total_tracks as f32
-                    } else {
-                        0.0
-                    };
-                    p.store((20.0 + f * 930.0) as u32, Ordering::Relaxed);
+                    p.store(
+                        (20.0 + pr.fraction.clamp(0.0, 1.0) * 930.0) as u32,
+                        Ordering::Relaxed,
+                    );
                 });
                 let _ = tx.send(result.map(Box::new).map_err(|e| e.to_string()));
             });

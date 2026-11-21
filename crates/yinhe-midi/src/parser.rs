@@ -32,7 +32,17 @@ use crate::error::MidiError;
 pub struct LoadProgress {
     pub current_track: usize,
     pub total_tracks: usize,
+    /// 已解析的 NoteOn 数（未配对也计入，是真实扫描量）。
+    pub notes_done: u64,
+    /// 第一遍扫描得到的 NoteOn 总数（上界）。
+    pub notes_total: u64,
+    /// 整体进度 0..1，已按“扫描/解析/写回”阶段加权。
+    pub fraction: f32,
 }
+
+/// 解析阶段按 NoteOn 数回报进度的批次大小：既避免每音符加锁，
+/// 又保证 1 亿音符也有约 1500 次中间回调。
+const PARSE_PROGRESS_NOTE_BATCH: u64 = 65_536;
 
 /// Fallback ticks-per-beat for SMPTE-timecode MIDI files (which we don't
 /// fully support; treat as if metrical with 480 ppq).
@@ -82,9 +92,16 @@ pub fn parse_bytes(data: &[u8]) -> Result<YinModel, MidiError> {
 pub fn parse_bytes_with_encoding(
     data: &[u8],
     encoding: MidiImportEncoding,
-    progress: impl FnMut(LoadProgress) + Send,
+    mut progress: impl FnMut(LoadProgress) + Send,
 ) -> Result<YinModel, MidiError> {
     yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
+        progress(LoadProgress {
+            current_track: 0,
+            total_tracks: 0,
+            notes_done: 0,
+            notes_total: 0,
+            fraction: 0.0,
+        });
         // 惰性解析：只切出 header + track 块迭代器，不构建全量事件树喵～
         let (header, track_iter) = midly::parse(data)?;
 
@@ -99,6 +116,14 @@ pub fn parse_bytes_with_encoding(
         // 未配对的 NoteOn 也计入，容量略大不会影响正确性）。
         let (conductor, cond_meta, per_key_count, per_track_count) =
             collect_conductor(track_iter.clone(), encoding)?;
+        let notes_total: u64 = per_track_count.iter().map(|&n| n as u64).sum();
+        progress(LoadProgress {
+            current_track: 0,
+            total_tracks: 0,
+            notes_done: 0,
+            notes_total,
+            fraction: 0.05,
+        });
 
         // Pass 2: per-track parse → TrackData, run in parallel across tracks.
         // Each track parses independently (all state in parse_track is local),
@@ -111,11 +136,11 @@ pub fn parse_bytes_with_encoding(
             track_iter.clone().collect::<Result<Vec<_>, _>>()?;
         let total_tracks = track_events.len();
 
-        // 并行解析进度：每完成一个 track 回调一次。
-        // 进度基准是"已完成的 track 数"，不再预先报满（旧实现解析开始前就发
-        // total/total，模型构建期间进度条已 100%，是"假进度"的根源）。
-        // FnMut 不能直接跨并行闭包共享，用 Mutex 包一层（每 track 锁一次，无竞争）。
+        // 并行解析进度：按**已解析 NoteOn 数**回调，每 65536 个音符锁一次；
+        // 单轨黑乐谱也能持续前进，不再只看“完成了几条轨”。
+        // FnMut 不能直接跨并行闭包共享，用 Mutex 包一层。
         let done = std::sync::atomic::AtomicUsize::new(0);
+        let notes_done = std::sync::atomic::AtomicU64::new(0);
         let progress = std::sync::Mutex::new(progress);
 
         // 音符边解析边写入最终存储：一批 = 一个并行波次（核数条轨道），
@@ -137,12 +162,40 @@ pub fn parse_bytes_with_encoding(
                 .map(|(i, events)| {
                     let expected =
                         per_track_count.get(base_track + i).copied().unwrap_or(0) as usize;
-                    let r = parse_track(events, base_track + i, encoding, expected);
+                    let r = parse_track(
+                        events,
+                        base_track + i,
+                        encoding,
+                        expected,
+                        &mut |batch: u64| {
+                            let d = notes_done
+                                .fetch_add(batch, std::sync::atomic::Ordering::Relaxed)
+                                + batch;
+                            let ratio = (d as f32 / notes_total.max(1) as f32).min(1.0);
+                            if let Ok(mut p) = progress.lock() {
+                                p(LoadProgress {
+                                    current_track: done.load(std::sync::atomic::Ordering::Relaxed),
+                                    total_tracks,
+                                    notes_done: d.min(notes_total),
+                                    notes_total,
+                                    fraction: 0.05 + ratio * 0.75,
+                                });
+                            }
+                        },
+                    );
                     let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     if let Ok(mut p) = progress.lock() {
+                        let ratio = (notes_done.load(std::sync::atomic::Ordering::Relaxed) as f32
+                            / notes_total.max(1) as f32)
+                            .min(1.0);
                         p(LoadProgress {
                             current_track: n,
                             total_tracks,
+                            notes_done: notes_done
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                                .min(notes_total),
+                            notes_total,
+                            fraction: 0.05 + ratio * 0.75,
                         });
                     }
                     r
@@ -174,6 +227,16 @@ pub fn parse_bytes_with_encoding(
             }
         }
 
+        if let Ok(mut p) = progress.lock() {
+            p(LoadProgress {
+                current_track: done.load(std::sync::atomic::Ordering::Relaxed),
+                total_tracks,
+                notes_done: notes_total,
+                notes_total,
+                fraction: 0.80,
+            });
+        }
+
         let artists: Vec<ArtistRef> = cond_meta
             .artists
             .into_iter()
@@ -199,16 +262,31 @@ pub fn parse_bytes_with_encoding(
             meta,
             ..Default::default()
         };
-        loader.finish(&mut model);
+        loader.finish_with_progress(&mut model, |done_notes| {
+            let ratio = (done_notes as f32 / notes_total.max(1) as f32).min(1.0);
+            if let Ok(mut p) = progress.lock() {
+                p(LoadProgress {
+                    current_track: total_tracks,
+                    total_tracks,
+                    notes_done: done_notes,
+                    notes_total,
+                    fraction: 0.80 + ratio * 0.15,
+                });
+            }
+        });
         // 自动化事件 id 不落盘：解析后统一发号（会话内身份，选择集/undo 用）。
         model.renumber_automation_ids();
-        model.rebuild();
+        // loader 已经写入完整统计与有序桶，这里只需让缓存知道所有 key 变了；
+        // 不再跑一次全量 rebuild（旧路径会多扫 1 亿音符）。
+        model.refresh_tempo_map();
+        model.bump_all_note_revisions();
 
         // Ensure a conductor track exists at index 0. This does an O(n)
         // track-index shift if one is missing — kept in the background thread
         // so the UI doesn't freeze on large files.
         if model.ensure_conductor_track() {
-            model.rebuild();
+            // 只重算统计（轨号整体 +1），不需要再排序/重分块。
+            model.rebuild_stats_only();
         }
 
         // Purge mimalloc free pages: after load_track_notes drops the
@@ -216,6 +294,16 @@ pub fn parse_bytes_with_encoding(
         // free list.  This hint tells it to munmap them back to the OS,
         // reducing RSS without affecting future allocations.
         yinhe_memtrace::purge_free_pages();
+
+        if let Ok(mut p) = progress.lock() {
+            p(LoadProgress {
+                current_track: total_tracks,
+                total_tracks,
+                notes_done: notes_total,
+                notes_total,
+                fraction: 1.0,
+            });
+        }
 
         Ok(model)
     })
@@ -458,7 +546,9 @@ fn parse_track(
     track_idx: usize,
     encoding: MidiImportEncoding,
     expected_notes: usize,
+    on_notes: &mut dyn FnMut(u64),
 ) -> Result<Option<TrackData>, MidiError> {
+    let mut pending_report = 0u64;
     let mut td = TrackData::new(0, 0);
     td.uuid = uuid::Uuid::new_v4().to_string();
     // NoteOn 数作上界（未配对 NoteOn 不会被计入音符），避免大轨 Vec 翻倍扩容。
@@ -532,6 +622,11 @@ fn parse_track(
                         let k = key.as_int();
                         let v = vel.as_int();
                         if v > 0 {
+                            pending_report += 1;
+                            if pending_report >= PARSE_PROGRESS_NOTE_BATCH {
+                                on_notes(pending_report);
+                                pending_report = 0;
+                            }
                             active_notes.push(ActiveNote {
                                 key: k,
                                 velocity: v,
@@ -669,6 +764,10 @@ fn parse_track(
         }
     }
 
+    if pending_report > 0 {
+        on_notes(pending_report);
+    }
+
     // Skip conductor-only tracks (no MIDI messages at all).
     if !has_midi_message {
         return Ok(None);
@@ -739,6 +838,9 @@ fn parse_track(
 
     td.automation_lanes = group_automation_events(auto_events, td.port, td.channel, track_idx);
 
+    if pending_report > 0 {
+        on_notes(pending_report);
+    }
     Ok(Some(td))
 }
 

@@ -383,7 +383,7 @@ impl FileLoader {
                 match event {
                     MidiLoadEvent::Progress(p) => {
                         loader.current_progress = Some(p);
-                        let ratio = p.current_track as f32 / p.total_tracks.max(1) as f32;
+                        let ratio = p.fraction.clamp(0.0, 1.0);
                         progress::set_stage_progress(
                             &self.load_progress,
                             0,
