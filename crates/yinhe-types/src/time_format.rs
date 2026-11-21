@@ -86,24 +86,30 @@ pub fn format_tick_bar_beat_with_time_sig(
     default_num: u8,
     default_den: u8,
 ) -> String {
-    // ── 1. Build time-signature segments (sorted by start tick) ──
-    let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
-
-    // ── 2. Compute cumulative bar offsets ──
-    let bar_offsets = compute_bar_offsets(ppq, &segments);
-
-    // ── 3. Find which segment tick falls in ──
-    let tick_u32 = tick as u32;
-    let seg_idx = segments
-        .partition_point(|&(start, _, _)| start <= tick_u32)
-        .saturating_sub(1);
-    let (seg_start, num, den) = segments[seg_idx];
+    // 不分配 segments/offsets：只累积 tick 之前已结束的完整小节数。
+    // 高密度拍号事件下，时间码每帧调用也不会产生两个 Vec。
+    let tick_u32 = tick.max(0.0) as u32;
+    let mut seg_start = 0u32;
+    let mut num = default_num;
+    let mut den = default_den;
+    let mut bar_offset = 0u32;
+    for ev in time_sig_events {
+        if ev.tick > tick_u32 {
+            break;
+        }
+        if ev.tick > seg_start {
+            let ticks_per_measure = measure_ticks(ppq, num, den).max(1);
+            bar_offset = bar_offset.saturating_add((ev.tick - seg_start) / ticks_per_measure);
+        }
+        seg_start = ev.tick;
+        num = ev.numerator;
+        den = ev.denominator;
+    }
     let local = tick_u32 - seg_start;
 
-    // ── 4. Compute bar / beat / tick_in_beat within the segment ──
-    let ticks_per_measure = measure_ticks(ppq, num, den);
-    let ticks_per_beat = (ticks_per_measure / num as u32).max(1);
-    let bar = bar_offsets[seg_idx] + (local / ticks_per_measure) + 1;
+    let ticks_per_measure = measure_ticks(ppq, num, den).max(1);
+    let ticks_per_beat = (ticks_per_measure / u32::from(num.max(1))).max(1);
+    let bar = bar_offset + (local / ticks_per_measure) + 1;
     let beat = ((local % ticks_per_measure) / ticks_per_beat) + 1;
     // tick 字段是"拍内 tick"，必须以本段实际拍长取模（分母 ≠ 4 时拍长 ≠ ppq）。
     let tick_in_beat = local % ticks_per_beat;
@@ -308,6 +314,58 @@ mod tests {
             format_tick_bar_beat_with_time_sig(720.0, 960, &ev, 4, 2),
             "2.1.240"
         );
+    }
+
+    #[test]
+    fn format_tick_bar_beat_with_time_sig_matches_segment_reference() {
+        let ev = [
+            TimeSigEvent {
+                tick: 0,
+                numerator: 3,
+                denominator: 2,
+            },
+            TimeSigEvent {
+                tick: 0,
+                numerator: 4,
+                denominator: 2,
+            },
+            TimeSigEvent {
+                tick: 960,
+                numerator: 6,
+                denominator: 3,
+            },
+            TimeSigEvent {
+                tick: 1920,
+                numerator: 7,
+                denominator: 3,
+            },
+        ];
+        fn reference(tick: f64, ppq: u32, events: &[TimeSigEvent], dn: u8, dd: u8) -> String {
+            let segments = build_time_sig_segments(events, dn, dd);
+            let offsets = compute_bar_offsets(ppq, &segments);
+            let t = tick.max(0.0) as u32;
+            let idx = segments
+                .partition_point(|&(s, _, _)| s <= t)
+                .saturating_sub(1);
+            let (seg_start, num, den) = segments[idx];
+            let local = t - seg_start;
+            let tm = measure_ticks(ppq, num, den).max(1);
+            let tb = (tm / u32::from(num.max(1))).max(1);
+            format!(
+                "{}.{}.{:03}",
+                offsets[idx] + local / tm + 1,
+                (local % tm) / tb + 1,
+                local % tb
+            )
+        }
+        for tick in (0..=6000).step_by(37) {
+            let tick = tick as f64;
+            assert_eq!(
+                format_tick_bar_beat_with_time_sig(tick, 480, &ev, 4, 2),
+                reference(tick, 480, &ev, 4, 2),
+                "tick={tick}"
+            );
+        }
     }
 
     #[test]
