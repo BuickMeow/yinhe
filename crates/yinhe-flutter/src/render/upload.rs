@@ -260,9 +260,15 @@ pub(super) fn upload_arrangement(
             rects: [[0; 4]; yinhe_wgpu::vertex::MAX_SEL_RECTS * 2],
         });
 
-    let mut key = view.render_hash();
-    key ^= (w.to_bits() as u64) << 17;
-    key ^= (h.to_bits() as u64) << 29;
+    // 音符实例只存 tick/key/track，x/y 由 shader 用 uniform 计算；缓存键用
+    // “窗口”而不是 scroll_x/scroll_y，滚动在窗口内时只更新 uniform。
+    let window = view.note_window(w, h, num_tracks);
+    let mut key = (view.base.pixels_per_tick.to_bits() as u64).rotate_left(7)
+        ^ (view.lane_height().to_bits() as u64).rotate_left(29)
+        ^ (u64::from(window.tick_start) << 1)
+        ^ (u64::from(window.tick_end) << 33)
+        ^ ((window.row_first as u64) << 15)
+        ^ ((window.row_last as u64) << 45);
     key ^= revision.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     key ^= model_epoch.wrapping_mul(0xD6E8_FEB8_6659_FD93);
     key ^= model.note_count.rotate_left(11);
@@ -275,19 +281,13 @@ pub(super) fn upload_arrangement(
     let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_ARRANGEMENT]);
     if key != t.notes_cache_key {
         t.notes_buf.clear();
-        // 只构建当前可见轨道行：undo/Riff 后 AR 层重建不再扫全工程所有轨。
-        let (trk_first, trk_last) = ArrangementView::visible_track_range_static(
-            view.base.scroll_y,
-            h,
-            view.lane_height(),
-            num_tracks,
-        );
-        yinhe_wgpu::build_arr_notes(
+        yinhe_wgpu::build_arr_notes_window(
             &mut t.notes_buf,
-            w,
             model,
             view,
-            (trk_first, trk_last),
+            window.tick_start,
+            window.tick_end,
+            (window.row_first, window.row_last),
             &visible,
             preview.hidden.as_ref(),
         );

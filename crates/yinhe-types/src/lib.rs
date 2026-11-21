@@ -26,7 +26,8 @@ pub mod view_base;
 
 pub use arr_row_layout::{ArRow, ArRowLayout};
 pub use arrangement_view::{
-    ArrangementView, LANE_HEIGHT_MAX, LANE_HEIGHT_MIN, LANE_HEIGHT_STEP, snap_lane_height,
+    ArrNoteWindow, ArrangementView, LANE_HEIGHT_MAX, LANE_HEIGHT_MIN, LANE_HEIGHT_STEP,
+    snap_lane_height,
 };
 pub use automation::{
     AmMsState, AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget,

@@ -100,9 +100,58 @@ pub fn build_notes(
     track_visible: &[bool],
     hidden_notes: &dyn yinhe_types::HiddenFilter,
 ) {
-    let ppu = view.base.pixels_per_tick;
-    let num_tracks = track_visible.len();
     let (tick_start, tick_end) = view.visible_tick_range(w);
+    build_notes_range(
+        out,
+        midi,
+        view,
+        tick_start,
+        tick_end,
+        track_range,
+        track_visible,
+        hidden_notes,
+    );
+}
+
+/// 用显式 tick 窗口构建 AR 音符层。
+///
+/// 窗口通常大于视口（见 `ArrangementView::note_window`），滚动在窗口内时
+/// 复用同一份实例，只更新 shader uniform。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+pub fn build_notes_window(
+    out: &mut Vec<NoteInstance>,
+    midi: &dyn NoteSource,
+    view: &ArrangementView,
+    tick_start: u32,
+    tick_end: u32,
+    track_range: (usize, usize),
+    track_visible: &[bool],
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
+) {
+    build_notes_range(
+        out,
+        midi,
+        view,
+        f64::from(tick_start),
+        f64::from(tick_end),
+        track_range,
+        track_visible,
+        hidden_notes,
+    );
+}
+
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+fn build_notes_range(
+    out: &mut Vec<NoteInstance>,
+    midi: &dyn NoteSource,
+    view: &ArrangementView,
+    tick_start: f64,
+    tick_end: f64,
+    track_range: (usize, usize),
+    track_visible: &[bool],
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
+) {
+    let ppu = view.base.pixels_per_tick;
     let (trk_first, trk_last) = track_range;
 
     let note_instances: Vec<Vec<NoteInstance>> = (0u8..=yinhe_types::MAX_KEY)
@@ -116,7 +165,9 @@ pub fn build_notes(
 
                 let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
 
-                let mut track_buckets: Vec<Vec<(u32, u32, u8)>> = vec![Vec::new(); num_tracks];
+                // 只给窗口内的行分配桶；全轨 799 条时从 10 万个 Vec 降到几千个。
+                let bucket_count = trk_last.saturating_sub(trk_first);
+                let mut track_buckets: Vec<Vec<(u32, u32, u8)>> = vec![Vec::new(); bucket_count];
                 for note in notes {
                     if note.start_tick as f64 > tick_end {
                         break;
@@ -134,15 +185,15 @@ pub fn build_notes(
                     if hidden_notes.is_hidden(note, key) {
                         continue;
                     }
-                    track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
+                    track_buckets[ti - trk_first].push((
+                        note.start_tick,
+                        note.end_tick,
+                        note.velocity,
+                    ));
                 }
 
-                for (ti, bucket) in track_buckets
-                    .iter()
-                    .enumerate()
-                    .take(trk_last)
-                    .skip(trk_first)
-                {
+                for (bi, bucket) in track_buckets.iter().enumerate() {
+                    let ti = trk_first + bi;
                     flush_track_bucket(
                         &mut local,
                         bucket.iter().copied(),
@@ -411,6 +462,29 @@ mod tests {
         let starts: Vec<u32> = out.iter().map(|n| n.start_tick).collect();
         assert!(starts.contains(&0), "range 内第一个音符被吞: {starts:?}");
         assert_eq!(out.len(), 3, "3 个音符都应被构建: {starts:?}");
+    }
+
+    #[test]
+    fn build_notes_window_uses_explicit_range() {
+        let midi = make_midi(vec![
+            (60, 0, 100, 0, 100),
+            (60, 900, 950, 0, 100),
+            (60, 1500, 1600, 0, 100),
+        ]);
+        let view = ArrangementView::default();
+        let mut out = Vec::new();
+        build_notes_window(
+            &mut out,
+            &midi,
+            &view,
+            800,
+            1200,
+            (0, 1),
+            &[true],
+            &HashSet::new(),
+        );
+        let starts: Vec<u32> = out.iter().map(|n| n.start_tick).collect();
+        assert_eq!(starts, vec![900], "只应构建窗口 800..1200 内的音符");
     }
 
     fn packed_track(packed: u32) -> u16 {

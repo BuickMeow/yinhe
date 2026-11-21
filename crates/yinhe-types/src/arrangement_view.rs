@@ -69,13 +69,24 @@ impl ArrangementView {
     }
 }
 
+/// AR 音符层的构建窗口：tick 与行都带预取。
+///
+/// 实例本身只存 tick/track/key，x/y 由 shader 用 uniform 计算；因此滚动在
+/// 窗口内时不需要重建实例，只有跨窗口才重建。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArrNoteWindow {
+    pub tick_start: u32,
+    pub tick_end: u32,
+    pub row_first: usize,
+    pub row_last: usize,
+}
+
 impl ArrangementView {
     /// Convert a MIDI tick to screen x coordinate.
     #[inline]
     pub fn tick_to_x(&self, tick: f64) -> f32 {
         self.base.tick_to_x(tick)
     }
-
     /// Convert screen x to MIDI tick.
     #[inline]
     pub fn x_to_tick(&self, x: f32) -> f64 {
@@ -109,6 +120,40 @@ impl ArrangementView {
         let visible_count = (height / lane_height).ceil() as usize + 1;
         let last = (first + visible_count).min(num_tracks);
         (first, last)
+    }
+
+    /// AR 音符层的构建窗口：tick 固定 2 个可见跨度，行上下各预取半屏。
+    ///
+    /// 这样播放跟随/滚动在窗口内只改 uniform，不重建实例；纵向滚动在预取行
+    /// 范围内也不重建。跨窗口时才需要重新构建。
+    pub fn note_window(&self, width: f32, height: f32, num_tracks: usize) -> ArrNoteWindow {
+        let (lo, hi) = self.visible_tick_range(width.max(1.0));
+        let span = (hi - lo).max(1.0);
+        let start = ((lo / span).floor() * span).max(0.0);
+        let end = (start + span * 2.0).max(start + 1.0);
+        let tick_start = start.min(f64::from(u32::MAX)) as u32;
+        let tick_end = (end.min(f64::from(u32::MAX)) as u32).max(tick_start.saturating_add(1));
+        let lane = self.lane_height();
+        let (row_first, row_last) = if num_tracks == 0 || lane <= 0.0 || height <= 0.0 {
+            (0, num_tracks)
+        } else {
+            let (first, last) = self.visible_track_range(height, num_tracks);
+            let visible_rows = ((height / lane).ceil() as usize + 1).max(2);
+            // 行窗口按半屏对齐并上下各预取一块：滚动小于半屏时窗口不变。
+            let block = (visible_rows / 2).max(1);
+            let first_block = first / block;
+            let last_block = last.div_ceil(block);
+            (
+                first_block.saturating_sub(1) * block,
+                (last_block + 1).saturating_mul(block).min(num_tracks),
+            )
+        };
+        ArrNoteWindow {
+            tick_start,
+            tick_end,
+            row_first,
+            row_last,
+        }
     }
 
     /// Clamp scroll so the view doesn't go out of bounds.
@@ -206,6 +251,33 @@ impl ArrangementView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn note_window_prefetches_two_spans_and_half_screen_rows() {
+        let mut v = ArrangementView::default();
+        v.base.pixels_per_tick = 1.0;
+        v.base.track_panel_row_height = 40.0;
+        v.base.scroll_x = 5500.0;
+        v.base.scroll_y = 0.0;
+        let a = v.note_window(1000.0, 400.0, 100);
+        // 可见 5500..6500，窗口按 span 对齐后是 5000..7000。
+        assert_eq!((a.tick_start, a.tick_end), (5000, 7000));
+        // 可见 11 行，窗口按半屏块（5 行）对齐并上下各预取一块。
+        assert_eq!((a.row_first, a.row_last), (0, 20));
+
+        // 窗口内小幅滚动不改变窗口。
+        v.base.scroll_x = 5510.0;
+        v.base.scroll_y = 10.0;
+        assert_eq!(v.note_window(1000.0, 400.0, 100), a);
+
+        // 跨过窗口/预取行边界才改变。
+        v.base.scroll_x = 7100.0;
+        let b = v.note_window(1000.0, 400.0, 100);
+        assert_ne!(a.tick_start, b.tick_start);
+        v.base.scroll_y = 800.0;
+        let c = v.note_window(1000.0, 400.0, 100);
+        assert_ne!(b.row_first, c.row_first);
+    }
 
     #[test]
     fn snap_lane_height_quantizes_to_step() {
