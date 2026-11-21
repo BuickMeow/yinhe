@@ -728,14 +728,35 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 - 没有算 `capture_snapshot`、undo 入栈、`has_overlapping_note_excluding` 和渲染；这些是 M1 修完后要继续测的完整 `pencil_drag_note` 路径。
 - 原型证明：**100µs 的左拉伸目标是可达的**；改 end / 删除可以稳定进 100µs 以内。若真实 COW 后左拉伸超过 100µs，再考虑同块 `copy_within`/rotate 合并两次 memmove。
 
+### M4 真实 after（生产代码）
+
+M1~M3 合入后，用同一 bench 跑真实 `*_at` 路径（不再用原型）：
+
+| 操作（10M/key） | 旧路径（by-id + rebuild_dirty） | 新路径（*_at） | 加速 |
+|---|---:|---:|---:|
+| 改 end | 209.2 ms | 2.3 µs | ~91,000× |
+| 改 velocity | 204.4 ms | 2.3 µs | ~89,000× |
+| 移动 | 234.9 ms | 208.2 µs | ~1,130× |
+| 左拉伸 | 326.2 ms | 58.3 µs | ~5,600× |
+| 删除 | 252.6 ms | 29.8 µs | ~8,500× |
+
+1M 新路径：改 end 1.2 µs、改 velocity 1.2 µs、移动 33.7 µs、左拉伸 43.9~97.6 µs、删除 13.2 µs。
+
+结论：
+
+- 除「移动」外都进了 100µs；移动 10M 约 208µs，原因是跨块 `insert_sorted` + 两次 memmove，仍是旧路径的 1/1100。
+- 移动的后续微调：同块内可用 `copy_within`/rotate 合并两次搬移；跨块时保持现状。先不为它增加复杂度。
+- `insert_batch_sorted` 流式归并后，10M + 10 万峰值从 309.0MB 降到 157.8MB（2.00× → 1.02×）。
+- LOD 关闭时不再构建/上传摘要，切换时释放/重建摘要层。
+
 | 阶段 | 内容 | 依赖 | 预估 |
 |---|---|---|---|
 | M0 | 补 bench + 尺寸断言 + 过期注释修正；跑 1~7，记录基线 | 无 | 已完成（2026-11-21） |
-| M1 | `NoteBucket::locate_at` + `update_at` + `remove_at` + 单元测试/对拍；模型层 `apply_note_stat_delta` 增量统计 | M0 通过 | 1~2 天 |
-| M2 | 模型层 `*_at` API；迁移铅笔/力度/单删/`set_note_end_tick`；删除无条件 sort 和单点 `rebuild_dirty`；`try_alloc_note_id` + 总量 guard；`note_count` 等计数统一 u32 | M1 | 1~2 天 |
-| M3 | `delete_notes` / `move_clip` / `loop_clip_*` 批量化；COW 范围测试 | M2 | 1~2 天 |
-| M4 | 复跑 bench 对比，确认目标；清理旧单点 by-id API | M3 | 0.5 天 |
-| M5 | S3-1 注释/断言；关闭 LOD 时跳过摘要构建/上传；S3-4 `insert_batch_sorted` 流式归并 | 可与 M1~M4 并行 | 1~1.5 天 |
+| M1 | `NoteBucket::locate_at` + `update_at` + `remove_at` + 单元测试/对拍；模型层 `apply_note_stat_delta` 增量统计 | M0 通过 | 已完成 |
+| M2 | 模型层 `*_at` API；迁移铅笔/力度/单删/`set_note_end_tick`；删除无条件 sort 和单点 `rebuild_dirty`；`try_alloc_note_id` + 总量 guard；`note_count` 等计数统一 u32 | M1 | 已完成 |
+| M3 | `delete_notes` / `move_clip` / `loop_clip_*` 批量化；COW 范围测试 | M2 | 已完成 |
+| M4 | 复跑 bench 对比，确认目标；清理旧单点 by-id API | M3 | 已完成；移动 10M 208µs 未达 100µs，其余达标 |
+| M5 | S3-1 注释/断言；关闭 LOD 时跳过摘要构建/上传；S3-4 `insert_batch_sorted` 流式归并 | 可与 M1~M4 并行 | 已完成 |
 | M6 | S3-2/S3-3：8 档仍全量常驻，只做逐档构建/上传峰值优化和逐 key 重建评估 | M5 | 先测后估 |
 | M7 | S3-5 undo delta：100M 已测；先做 16B `UndoNote`；列式 7.87B 已接受，必须带进度条 + 按 key 流式恢复 | M0 数据 | 待定 |
 | M8 | 移动端专项：`NoteLayerCache` 窗口外桶释放、`LayerSlot` 缩容（先测后做） | M0 数据 | 待定 |
