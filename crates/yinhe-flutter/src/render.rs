@@ -497,9 +497,11 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         t.renderer.clear_velocity_summary();
     }
 
-    // AM 力度条摘要：不等 AM 展开就后台预热；load 完成后第一帧即开始构建，
-    // 首次打开 AM 时通常已经就绪，避免先走一帧昂贵的原始力度条。
-    if let Some(model) = model.as_ref() {
+    // 力度条只在 PR/AM 使用；AR 不预热，避免每次编辑都在后台做 8 遍全曲扫描。
+    // load 完成后的 PR 首帧即开始构建，首次打开 AM 时通常已经就绪。
+    if view_mode == ViewMode::Pianoroll
+        && let Some(model) = model.as_ref()
+    {
         let visible = effective_visible(&pr_track_visible, display_track);
         let tv_hash = yinhe_wgpu::hash_bools(&visible);
         t.renderer
