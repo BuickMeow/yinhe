@@ -113,33 +113,6 @@ pub fn build_notes(
     );
 }
 
-/// 用显式 tick 窗口构建 AR 音符层。
-///
-/// 窗口通常大于视口（见 `ArrangementView::note_window`），滚动在窗口内时
-/// 复用同一份实例，只更新 shader uniform。
-#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
-pub fn build_notes_window(
-    out: &mut Vec<NoteInstance>,
-    midi: &dyn NoteSource,
-    view: &ArrangementView,
-    tick_start: u32,
-    tick_end: u32,
-    track_range: (usize, usize),
-    track_visible: &[bool],
-    hidden_notes: &dyn yinhe_types::HiddenFilter,
-) {
-    build_notes_range(
-        out,
-        midi,
-        view,
-        f64::from(tick_start),
-        f64::from(tick_end),
-        track_range,
-        track_visible,
-        hidden_notes,
-    );
-}
-
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn build_notes_range(
     out: &mut Vec<NoteInstance>,
@@ -214,6 +187,104 @@ fn build_notes_range(
         .collect();
 
     out.extend(note_instances.into_iter().flatten());
+}
+
+/// 用 CPU Cull 构建 AR 音符层：每帧只遍历与视口相交的块，流式合并后
+/// 直接写入 `out`，不保留窗口副本、不分配 12B/音符的临时桶。
+///
+/// 输出顺序是「key → 按 start_tick 交错各轨道」；AR 每个轨道占独立行，
+/// 行间绘制顺序不影响结果；同一轨道内仍按 start_tick 有序并做亚像素合并。
+pub fn build_notes_culled(
+    out: &mut Vec<NoteInstance>,
+    w: f32,
+    midi: &dyn NoteSource,
+    view: &ArrangementView,
+    track_range: (usize, usize),
+    track_visible: &[bool],
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
+) {
+    let ppu = view.base.pixels_per_tick;
+    let (tick_start_f, tick_end_f) = view.visible_tick_range(w);
+    let tick_start = tick_start_f.max(0.0) as u32;
+    let tick_end = tick_end_f.max(tick_start_f + 1.0) as u32;
+    let (trk_first, trk_last) = track_range;
+    let bucket_count = trk_last.saturating_sub(trk_first);
+    let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
+
+    let key_instances: Vec<Vec<NoteInstance>> = (0u8..=yinhe_types::MAX_KEY)
+        .into_par_iter()
+        .filter_map(|key| {
+            stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
+                let chunks = midi.key_notes(key).chunks_in_range(tick_start, tick_end);
+                let mut local = Vec::new();
+                // 每个可见轨道行一个流式合并状态：(start, max_end, max_vel)。
+                let mut states: Vec<Option<(u32, u32, u8)>> = vec![None; bucket_count];
+
+                'chunks: for chunk in chunks {
+                    for note in chunk.iter() {
+                        if note.start_tick as f64 > tick_end_f {
+                            break 'chunks;
+                        }
+                        if (note.end_tick as f64) < tick_start_f {
+                            continue;
+                        }
+                        let ti = note.track as usize;
+                        if ti < trk_first || ti >= trk_last {
+                            continue;
+                        }
+                        if !track_visible.get(ti).copied().unwrap_or(true) {
+                            continue;
+                        }
+                        if hidden_notes.is_hidden(note, key) {
+                            continue;
+                        }
+                        let bi = ti - trk_first;
+                        match states[bi] {
+                            None => {
+                                states[bi] = Some((note.start_tick, note.end_tick, note.velocity))
+                            }
+                            Some((ms, me, mv))
+                                if note.start_tick <= me.saturating_add(merge_gap_ticks) =>
+                            {
+                                states[bi] =
+                                    Some((ms, me.max(note.end_tick), mv.max(note.velocity)));
+                            }
+                            Some(prev) => {
+                                let s = (f64::from(prev.0)).max(tick_start_f) as u32;
+                                let e = (f64::from(prev.1)).min(tick_end_f) as u32;
+                                if s < e {
+                                    local.push(NoteInstance {
+                                        start_tick: s,
+                                        end_tick: e,
+                                        packed: NoteInstance::pack(key, ti as u16, prev.2),
+                                    });
+                                }
+                                states[bi] = Some((note.start_tick, note.end_tick, note.velocity));
+                            }
+                        }
+                    }
+                }
+
+                for (bi, state) in states.iter().enumerate() {
+                    if let Some((start, end, vel)) = *state {
+                        let s = (f64::from(start)).max(tick_start_f) as u32;
+                        let e = (f64::from(end)).min(tick_end_f) as u32;
+                        if s < e {
+                            local.push(NoteInstance {
+                                start_tick: s,
+                                end_tick: e,
+                                packed: NoteInstance::pack(key, (trk_first + bi) as u16, vel),
+                            });
+                        }
+                    }
+                }
+
+                if local.is_empty() { None } else { Some(local) }
+            })
+        })
+        .collect();
+
+    out.extend(key_instances.into_iter().flatten());
 }
 
 /// Build ghost note instances for move-drag preview (layer 3, no cache).
@@ -465,26 +536,27 @@ mod tests {
     }
 
     #[test]
-    fn build_notes_window_uses_explicit_range() {
+    fn build_notes_culled_only_emits_visible_range() {
         let midi = make_midi(vec![
             (60, 0, 100, 0, 100),
             (60, 900, 950, 0, 100),
             (60, 1500, 1600, 0, 100),
         ]);
-        let view = ArrangementView::default();
+        let mut view = ArrangementView::default();
+        view.base.pixels_per_tick = 1.0;
+        view.base.scroll_x = 800.0;
         let mut out = Vec::new();
-        build_notes_window(
+        build_notes_culled(
             &mut out,
+            400.0,
             &midi,
             &view,
-            800,
-            1200,
             (0, 1),
             &[true],
             &HashSet::new(),
         );
         let starts: Vec<u32> = out.iter().map(|n| n.start_tick).collect();
-        assert_eq!(starts, vec![900], "只应构建窗口 800..1200 内的音符");
+        assert_eq!(starts, vec![900], "只应产出视口 800..1200 内的音符");
     }
 
     fn packed_track(packed: u32) -> u16 {

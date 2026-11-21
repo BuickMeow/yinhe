@@ -24,7 +24,6 @@ use yinhe_types::{
     PianoRollView, TimelineViewBase,
 };
 use yinhe_wgpu::pianoroll::build_render_job;
-use yinhe_wgpu::vertex::NoteInstance;
 use yinhe_wgpu::{AutomationGhost, InstanceRenderer};
 
 use crate::Gpu;
@@ -306,10 +305,6 @@ impl Sink {
 pub struct Target {
     sink: Sink,
     renderer: InstanceRenderer,
-    /// AR 音符层缓存键：与上次相同则跳过实例重建。
-    notes_cache_key: u64,
-    /// AR 音符实例缓冲。
-    notes_buf: Vec<NoteInstance>,
     /// PR 可见窗口 + key 分桶缓存；滚动在 padding 内只改 uniform。
     pr_note_cache: yinhe_wgpu::NoteLayerCache,
     /// 上一次的文档身份，用于换文档时清掉力度条摘要。
@@ -329,8 +324,6 @@ impl Target {
                 format,
                 gpu.caps,
             ),
-            notes_cache_key: 0,
-            notes_buf: Vec::new(),
             pr_note_cache: yinhe_wgpu::NoteLayerCache::new(VIEW_TAG_PIANOROLL),
             last_model_epoch: 0,
             fps_start: Instant::now(),

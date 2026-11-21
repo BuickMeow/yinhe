@@ -260,43 +260,46 @@ pub(super) fn upload_arrangement(
             rects: [[0; 4]; yinhe_wgpu::vertex::MAX_SEL_RECTS * 2],
         });
 
-    // 音符实例只存 tick/key/track，x/y 由 shader 用 uniform 计算；缓存键用
-    // “窗口”而不是 scroll_x/scroll_y，滚动在窗口内时只更新 uniform。
-    let window = view.note_window(w, h, num_tracks);
-    let mut key = (view.base.pixels_per_tick.to_bits() as u64).rotate_left(7)
-        ^ (view.lane_height().to_bits() as u64).rotate_left(29)
-        ^ (u64::from(window.tick_start) << 1)
-        ^ (u64::from(window.tick_end) << 33)
-        ^ ((window.row_first as u64) << 15)
-        ^ ((window.row_last as u64) << 45);
-    key ^= revision.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    key ^= model_epoch.wrapping_mul(0xD6E8_FEB8_6659_FD93);
-    key ^= model.note_count.rotate_left(11);
-    key ^= preview.hidden_hash.wrapping_mul(0x94D0_49BB_1331_11EB);
+    // CPU Cull：每帧只遍历与视口相交的 chunk，不保留窗口实例副本。
+    // key 只用于「画面完全相同就不要重复构建/上传」；滚动/缩放/编辑会变化。
+    let (tick_lo, tick_hi) = view.visible_tick_range(w);
+    let (trk_first, trk_last) = ArrangementView::visible_track_range_static(
+        view.base.scroll_y,
+        h,
+        view.lane_height(),
+        num_tracks,
+    );
+    let mut visible_hash = 0u64;
     for (i, vis) in visible.iter().enumerate() {
         if *vis {
-            key ^= 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(i as u64 + 1);
+            visible_hash ^= 0x9E37_79B9_7F4A_7C15u64.wrapping_mul(i as u64 + 1);
         }
     }
-    let key = yinhe_wgpu::layer_cache_key(&[key, VIEW_TAG_ARRANGEMENT]);
-    if key != t.notes_cache_key {
-        t.notes_buf.clear();
-        yinhe_wgpu::build_arr_notes_window(
-            &mut t.notes_buf,
+    let key = yinhe_wgpu::layer_cache_key(&[
+        tick_lo.to_bits(),
+        tick_hi.to_bits(),
+        u64::from(view.base.pixels_per_tick.to_bits()),
+        trk_first as u64,
+        trk_last as u64,
+        revision.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+        model_epoch.wrapping_mul(0xD6E8_FEB8_6659_FD93),
+        model.note_count.rotate_left(11),
+        preview.hidden_hash.wrapping_mul(0x94D0_49BB_1331_11EB),
+        visible_hash,
+    ])
+    .max(1);
+    t.renderer.ensure_layers(3);
+    t.renderer.upload_note_layer(1, key, |out| {
+        yinhe_wgpu::build_arr_notes_culled(
+            out,
+            w,
             model,
             view,
-            window.tick_start,
-            window.tick_end,
-            (window.row_first, window.row_last),
+            (trk_first, trk_last),
             &visible,
             preview.hidden.as_ref(),
         );
-        t.notes_cache_key = key;
-    }
-    t.renderer.ensure_layers(3);
-    let notes_buf = &t.notes_buf;
-    t.renderer
-        .upload_note_layer(1, key, |out| out.extend_from_slice(notes_buf));
+    });
     // AR ghost：与 PR 共用 DragPreview；无 ghost 时上传空层清掉上一帧。
     let ghost_key = yinhe_wgpu::layer_cache_key(&[
         VIEW_TAG_ARRANGEMENT ^ 0xA5A5_5A5A,

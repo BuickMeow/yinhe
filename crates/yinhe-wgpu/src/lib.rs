@@ -34,7 +34,7 @@ pub use yinhe_theme::GpuTheme;
 // Re-export types that were previously provided by the separate crates
 pub use arrangement::{
     build_channel_ghost_notes, build_channel_notes, build_ghost_notes,
-    build_notes as build_arr_notes, build_notes_window as build_arr_notes_window,
+    build_notes as build_arr_notes, build_notes_culled as build_arr_notes_culled,
 };
 pub use automation::{
     ANCHOR_SCALE_DESKTOP, ANCHOR_SCALE_TOUCH, ArrAutomationLane, AutomationGhost, VelocityBlock,
