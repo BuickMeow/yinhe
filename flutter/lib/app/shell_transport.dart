@@ -195,6 +195,7 @@ mixin _ShellTransport on _ShellBase {
 
   @override
   void _togglePlay() {
+    _wake();
     final next = !_playing;
     setState(() => _playing = next);
     rust.transport(next ? 0 : 1);
@@ -203,6 +204,7 @@ mixin _ShellTransport on _ShellBase {
 
   @override
   void _stopPlayback() {
+    _wake();
     rust.transport(2);
     _updateTimecode();
     setState(() => _playing = false);

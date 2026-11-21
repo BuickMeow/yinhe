@@ -390,9 +390,11 @@ abstract class _ShellBase extends State<StudioShell>
   final ValueNotifier<Offset?> _lpPosNotifier = ValueNotifier(null);
   final ValueNotifier<bool> _moveDashed = ValueNotifier(false);
 
-  /// 帧计数（时间码/工程状态降频）。
-  int _frameCounter = 0;
+  /// 空闲停帧后由输入/程序性动作置 true，保证至少再渲染一帧。
+  bool _frameRequested = true;
   DateTime? _lastFrameAt;
+  Timer? _statusTimer;
+  Timer? _audioRecoverTimer;
 
   /// 音色库热切换进度（低频轮询，切换期间驱动底部小进度条）。
   void _readSfProgress() {
@@ -532,6 +534,9 @@ abstract class _ShellBase extends State<StudioShell>
   void _readDocState();
   void _refreshDocumentMeta();
 
+  /// 请求下一帧并确保 ticker 在跑；空闲停帧后所有输入/程序性动作都要调它。
+  void _wake();
+
   /// 显示后台文档任务（批量编辑/撤销重做/PPQ 等）的进度框。
   Future<bool> _runDocJob({
     required String title,
@@ -592,6 +597,7 @@ abstract class _ShellBase extends State<StudioShell>
     if (event is! KeyDownEvent) {
       return KeyEventResult.ignored;
     }
+    _wake();
     final key = event.logicalKey;
     final primary =
         HardwareKeyboard.instance.isControlPressed ||
@@ -628,6 +634,31 @@ class _StudioShellState extends _ShellBase
         _ShellInput,
         _ShellMenus,
         _ShellBuild {
+  @override
+  void _wake() {
+    _frameRequested = true;
+    if (mounted && !_ticker.isActive) {
+      _lastFrameAt = DateTime.now();
+      _ticker.start();
+    }
+  }
+
+  bool _needsFrames() {
+    if (_frameRequested) return true;
+    if (_playing) return true;
+    if (_pointerPositions.isNotEmpty) return true;
+    if (_gestureEditing) return true;
+    if (_rulerScrubbing) return true;
+    if (_lpStartTime != null) return true;
+    if (_marqueeHintPos.value != null) return true;
+    if (_noteFades.isNotEmpty) return true;
+    if (_amTextureWarmup > 0) return true;
+    if (!_loadUiSettled) return true;
+    if (_saving || _archiveBusy || _archivePolling) return true;
+    if (_handlesStart != null) return true;
+    return false;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -669,8 +700,14 @@ class _StudioShellState extends _ShellBase
       if (!coveredByRoute) {
         // 帧驱动同步：`renderFrame` 同步等到 present 完成，之后读取的浮层数据
         // 与纹理来自同一份 Rust 状态，不需要再按帧数延迟。
-        // 拖拽边缘自动滚动：先滚动视图，再渲染这一帧。
-        rust.dragTick();
+        // 拖拽边缘自动滚动/惯性先推进；它返回 1 时继续出帧。
+        final scrolling = rust.dragTick() == 1;
+        if (!scrolling && !_frameRequested && !_needsFrames()) {
+          // 空闲：停止 vsync 请求。下次输入/后台任务完成时 _wake() 重启。
+          _ticker.stop();
+          return;
+        }
+        _frameRequested = false;
         _tickRulerScrub();
         rust.renderFrame();
         // 到工程末尾：等 release 尾音自然结束后暂停在末尾，不回开头。
@@ -734,42 +771,46 @@ class _StudioShellState extends _ShellBase
       }
       // 时间码每帧更新（60Hz），避免毫秒位按 4 帧（~67ms）跳动。
       _updateTimecode();
-      // 工程状态降频（每 ~66ms）：减少音频锁与历史栈分配开销。
-      // 对话框打开时也要跑：_pollArchive 靠它关闭加载进度框。
-      _frameCounter++;
       if (_amTextureWarmup > 0) {
         _amTextureWarmup--;
         if (_amTextureWarmup == 0 && mounted) {
           setState(() {});
         }
       }
-      // 移动端没有桌面那种音频设备切换对话框：每秒检查一次 cpal 流是否
-      // 已失效（AAudio 长时间后台/模拟器音频后端重启），失效则自动重建。
-      if (_frameCounter % 60 == 0) {
+      // 后台状态不再搭渲染帧的便车：空闲停帧后仍由 Timer 轮询，
+      // 发现文档代次变化时再唤醒 ticker 重绘。
+      // （Ticker 本身会持续请求 vsync，不需要再 scheduleFrame。）
+    })..start();
+    _statusTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      if (!mounted) {
+        return;
+      }
+      _readDocState();
+      _pollArchive();
+      _readSfProgress();
+      rust.autosaveTick();
+      final generation = rust.documentGeneration();
+      if (generation != _docGeneration) {
+        _docGeneration = generation;
+        _refreshDocumentMeta();
+        if (!_loadUiSettled) {
+          // 先让这一帧把轨道/自动化/纹理画出来，再放进度框关闭。
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              _loadUiSettled = true;
+            }
+          });
+        }
+        _wake();
+      }
+    });
+    // 移动端没有桌面那种音频设备切换对话框：每秒检查一次 cpal 流是否
+    // 已失效（AAudio 长时间后台/模拟器音频后端重启），失效则自动重建。
+    _audioRecoverTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
         rust.recoverAudio();
       }
-      if (_frameCounter % 4 == 0) {
-        final generation = rust.documentGeneration();
-        if (generation != _docGeneration) {
-          _docGeneration = generation;
-          _refreshDocumentMeta();
-          if (!_loadUiSettled) {
-            // 先让这一帧把轨道/自动化/纹理画出来，再放进度框关闭。
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) {
-                _loadUiSettled = true;
-              }
-            });
-          }
-        }
-        _readDocState();
-        _pollArchive();
-        _readSfProgress();
-        rust.autosaveTick();
-      }
-      // 保持连续帧：Rust 侧拖拽/边缘滚动/渲染都由帧驱动（手指静止时也要跑）。
-      SchedulerBinding.instance.scheduleFrame();
-    })..start();
+    });
     _recent = _readRecent();
     _loadLanguage();
     // 默认 AR 1/1、PR 1/16（文档可能是空白占位，先显式下发一次）。
@@ -801,6 +842,7 @@ class _StudioShellState extends _ShellBase
 
   void _onThemeTransition() {
     if (mounted) {
+      _wake();
       setState(() {});
     }
   }
@@ -809,6 +851,8 @@ class _StudioShellState extends _ShellBase
   void dispose() {
     YinheTheme.transition.removeListener(_onThemeTransition);
     _workTimer?.cancel();
+    _statusTimer?.cancel();
+    _audioRecoverTimer?.cancel();
     _workSeconds.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _ticker.dispose();

@@ -41,6 +41,7 @@ mixin _ShellInput on _ShellBase {
   /// 后续的 tap / long press / scale 全部交给 Flutter gesture arena。
   @override
   void _handlePointerDown(PointerDownEvent e) {
+    _wake();
     // 点击/触摸画布时把键盘焦点交给画布，外接键盘才能用 Space/撤销/保存。
     _canvasFocus.requestFocus();
     final emptyBefore = _activePointers.isEmpty;
@@ -79,6 +80,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handlePointerMove(PointerMoveEvent e) {
+    _wake();
     if (_pointerPositions.containsKey(e.pointer)) {
       _pointerPositions[e.pointer] = e.localPosition;
     }
@@ -86,6 +88,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handlePointerUp(PointerUpEvent e) {
+    _wake();
     _activePointers.remove(e.pointer);
     _pointerPositions.remove(e.pointer);
     if (_activePointers.isNotEmpty) {
@@ -105,6 +108,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handlePointerCancel(PointerCancelEvent e) {
+    _wake();
     _activePointers.remove(e.pointer);
     _pointerPositions.remove(e.pointer);
     if (_activePointers.isNotEmpty) {
@@ -123,6 +127,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleTapUp(TapUpDetails d) {
+    _wake();
     // 多指轻点由 MultiFingerGestureRecognizer 处理，不能再走单指画布点击
     // （双指 Tap 会在第一根手指抬起时触发一次 onTapUp）。
     if (_maxActivePointers >= 2) {
@@ -155,6 +160,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleScaleStart(ScaleStartDetails d) {
+    _wake();
     rust.stopFling();
     _clearLongPressUi();
     _lastFocal = d.localFocalPoint;
@@ -180,6 +186,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleScaleUpdate(ScaleUpdateDetails d) {
+    _wake();
     final focal = d.localFocalPoint;
     if (d.pointerCount >= 2) {
       if (_gestureEditing) {
@@ -255,6 +262,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleScaleEnd(ScaleEndDetails d) {
+    _wake();
     final wasEditing = _gestureEditing || _gestureWasEditing;
     if (_gestureEditing) {
       _finishEditGesture(_lastFocal, moved: _gestureMoved || _lpMoved);
@@ -293,6 +301,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleLongPressStart(LongPressStartDetails d) {
+    _wake();
     // 多指按住不应触发 AR 拖轨/选区菜单等单指长按行为。
     if (_maxActivePointers >= 2) {
       _clearLongPressUi();
@@ -579,6 +588,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleLongPressMove(LongPressMoveUpdateDetails d) {
+    _wake();
     final p = d.localPosition;
     if (_dragging) {
       // Master（Conductor）固定在 0 号位，拖动不改目标。
@@ -623,6 +633,7 @@ mixin _ShellInput on _ShellBase {
 
   @override
   void _handleLongPressEnd(LongPressEndDetails d) {
+    _wake();
     if (_dragging) {
       _finishTrackDrag();
       return;
@@ -786,6 +797,7 @@ mixin _ShellInput on _ShellBase {
   /// 其余缩放时间轴），普通滚轮平移时间轴。
   @override
   void _handlePointerSignal(PointerSignalEvent e) {
+    _wake();
     if (e is! PointerScrollEvent) {
       return;
     }

@@ -315,6 +315,7 @@ mixin _ShellCore on _ShellBase {
     if (!mounted) {
       return;
     }
+    _wake();
     // 大文件复制进度（Android/iOS/OHOS 统一协议）。
     if (call.method == 'onCopyStart') {
       final args = (call.arguments as Map?) ?? const {};
@@ -457,6 +458,7 @@ mixin _ShellCore on _ShellBase {
     bool determinate = false,
     bool cancelable = false,
   }) async {
+    _wake();
     // 小操作通常 150ms 内完成：先等一下，已经结束就不弹框（撤销/重做不闪）。
     await Future<void>.delayed(const Duration(milliseconds: 150));
     if (!mounted) {
@@ -679,6 +681,7 @@ mixin _ShellCore on _ShellBase {
     if (_viewMode == mode) {
       return;
     }
+    _wake();
     _syncCanvasSizeForView(mode);
     rust.setViewMode(mode);
     _syncArrPanelWidth();
