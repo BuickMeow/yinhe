@@ -14,7 +14,7 @@
 > 3. **undo 压缩不保证性能**，必须先 bench 再决定；不预设压缩方案。见 3.6。
 > 4. **先做 bench，再开始修**。M0 是硬门禁，bench 结果评审后才进 M1。见第 5 节。
 > 5. **不是所有措施都双端有效**：模型/热路径/批量/undo/save 是双端共享；GPU cull 的 8 档摘要和全量重建是桌面端专用；移动端另有 `NoteLayerCache` 常驻桶、`LayerSlot` 高水位等问题。见 3.9。
-> 6. **M0 基准已完成**（Apple M5 / release）：10M 单 key 完整铅笔路径约 195~200 ms/帧，`rebuild_dirty` 占 80%~90%；列式 undo delta 7.87B/音符，10M 解码 109ms。见第 5 节。
+> 6. **M0 基准已完成**（Apple M5 / release）：10M 单 key 完整铅笔路径约 81~91 ms/帧，`rebuild_dirty` 占 85%；优化后原型（bench 内，非生产）改 end 2.7µs、左拉伸 43.4µs、删除 14.9µs；列式 undo delta 7.87B/音符，10M 解码 58.1ms。见第 5 节。
 
 1. **保留 `start_tick + end_tick`，`Note` 维持 16B。** 换成「起点+长度」内存完全一样，性能差异被内存带宽淹没；现有 `max_ends`、`range_including_long`、GPU `NoteInstance` 都以 end 为中心，改 gate 只增加溢出和 `gate = 0` 两个边界。
 2. **P0 是第 4 节的单音符热路径**：按 id 线性扫整桶、每次 `update_note_by_id` 无条件 `sort()`、单点删除后全桶重算 `max_ends`、单点编辑后 `rebuild_dirty()` 重扫整桶。这是 1 亿音符下真正会卡手的地方，优先级高于省 4B/音符。该层在 `yinhe-types` / `yinhe-core`，桌面和移动端同时受益。
@@ -270,19 +270,27 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 
 #### 3.6.4 M0 实测（2026-11-21，Apple M5 / release）
 
-| 方案 | 1M B/音符 | 10M B/音符 | 1M 编码 / 解码 | 10M 编码 / 解码 |
+| 方案 | 1M B/音符 | 10M B/音符 | 1M 拷贝/编码 / 解码 | 10M 拷贝/编码 / 解码 |
 |---|---|---|---|---|
-| `Vec<(Note,u8)>` 拷贝 | 20.00 | 20.00 | 5.2 ms / — | 53.3 ms / — |
-| 列式 delta | 7.87 | 7.87 | 11.8 / 12.3 ms | 86.6 / 109.3 ms |
-| 列式 + zstd3 | 4.37 | 3.99 | 154.7 / 28.0 ms | 832.2 / 179.0 ms |
+| `Vec<(Note,u8)>` | 20.00 | 20.00 | 2.2 ms / — | 21.4 ms / — |
+| `Vec<Note>`（按 key 分组） | 16.00 | 16.00 | 0.7 ms / — | 15.9 ms / — |
+| 列式 delta | 7.87 | 7.87 | 5.4 / 5.8 ms | 51.9 / 58.1 ms |
+| 列式 + zstd1 | 5.20 | 4.72 | 12.1 / 8.4 ms | 213.9 / 92.9 ms |
+| 列式 + zstd3 | 4.37 | 3.99 | 49.3 / 11.5 ms | 496.4 / 114.5 ms |
+| 列式 + lz4 | 7.06 | 6.37 | 17.2 / 3.7 ms | 220.2 / 37.6 ms |
 
 结论：
 
-- 列式 delta 省 61% 内存，10M 编解码约 0.1 s；外推 100M 约 0.9 s 编码 / 1.1 s 解码，对一次性 undo 可能可接受。
-- zstd3 再省到 3.99 B/音符，但 10M 编码 832 ms，外推 100M 约 8 s；**编辑提交时不可接受**。如果一定要 zstd，只能放到后台或按需压缩，那会引入“什么时候压”的阈值/调度复杂度，不建议。
-- 所以如果做压缩，方向是「列式 delta，不叠 zstd」。100M 的 1 秒解码是否可接受，还需要你拍板；如果不可接受，就保持现状或只做历史预算。
+- **先做按 key 分组 16B**：20B → 16B，省 20%，无编码/解码成本，10M 拷贝还快 26%。这是最便宜的保底，不改变 undo 的同步语义。
+- **列式 delta 是内存主选项**：7.87B/音符，省 61%；10M 编解码约 0.05s，外推 100M 约 0.5~0.6s。你已表示 1 秒可接受，移动端收益最大。
+- **zstd1 / zstd3 不适合提交路径**：10M 编码 214ms / 496ms，外推 100M 2.1s / 5s。解码尚可（93 / 115ms），但编码已经输了。
+- **lz4 也不占优**：压缩率 6.37B 不如 zstd1，编码 220ms 反而更慢，解码 38ms 很快。当前实现没有赢过「列式无压缩」。
+- 没有发现比 varint 列式更快且更省的通用手段。下一步如果要继续压，只能考虑：
+  - 固定位宽/bit-pack（start delta、gate 用每块 bit width），省一点但复杂度上升；
+  - 把 undo delta 落临时文件/内存映射，省 RAM 但引入 I/O，移动端不一定划算；
+  - 历史预算（丢最老 undo），产品决策。
 
-本次建议：**列式 delta 可以进入候选，但先补 100M 编解码 bench，再决定是否实现。** 不实现 zstd3 路径。如果移动端 4~6GB 设备实测会在 undo 时 OOM，再把它提到 P1。
+本次建议：**先做 16B 分组建保底；列式 delta 作为 100M 的内存方案，1s 解码你已接受；不引入 zstd/lz4 到提交路径。** 实现前补一个 100M 的编解码 bench，确认外推误差和峰值内存。
 
 ### 3.7 S3-6：接受 / 不修 / 移动端专项
 
@@ -436,6 +444,30 @@ fn remove_at(&mut self, start: u32, track: u16, id: u32) -> Option<Note>;
 
 注意 `Arc::make_mut` 的借用冲突：移除/插入要分两段作用域，不能边持有 `&mut chunk` 边调 `self.insert_sorted`。这是实现细节，但决定代码能不能写干净。
 
+#### 4.4.1 左拉伸专项（常用操作）
+
+左拉伸 = `start_tick` 改变、`end_tick` 不变。当前路径会触发全桶 `sort()`，10M 实测 169~497ms/帧（运行波动约 2~3×）。优化后的步骤：
+
+1. `locate_at(old_start, track, id)` 定位；O(log 块数 + 块内二分 + 同 tick run)。
+2. 从原块 `Vec::remove(idx)`（最多 1MB memmove）。
+3. 若原块为空，移除块并同步 `starts` / `max_ends`；否则只在该音符是块首或最大 end 时刷新该块元数据。
+4. 改 `start_tick = new_start.min(end_tick - 1)`；`end_tick` 不变。
+5. `insert_sorted(note)` 放回（可能同块、跨块或触发块分裂）；只刷新目标块元数据。
+6. 统计增量：note_count / 每轨计数不变；`tick_length` 用块级 `max_ends` 的 max 更新（O(块数)）。
+7. 不调用 `sort()`、不调用 `rebuild_dirty()`。
+
+原型实测 10M 43.4µs（无 COW），1M 39.1µs；真实编辑若音频持有快照，多一次 ≤1MB 块复制，预计 ~100µs，仍是 169ms 的 1/1700。
+
+边界：
+
+- 新 start 落在相邻块：remove 后 `insert_sorted` 会选对块；不要直接改块内元素。
+- 同 start 跨块切分：`locate_at` 必须向前回退（见 4.3）。
+- 块分裂：`insert_sorted` 的 65536 上限逻辑复用现有实现。
+- `max_ends` 必须精确：删除或缩短最大 end 时重算该块，否则 `tick_length` / 裁剪会失真。
+- 两次 memmove：同块内 remove+insert 是两次搬移；如果后续要把左拉伸压到稳定 <100µs，可用 `Vec::copy_within`/rotate 合并为一次搬移。先按简单实现，bench 后决定。
+
+完整路径还要算 `has_overlapping_note_excluding` 和 `capture_snapshot`/undo 入栈；M1 修完后用 `Document::pencil_drag_note` 再测一次，确认这两项没有变成新的瓶颈。
+
 ### 4.5 模型层 API
 
 在 `crates/yinhe-core/src/note_write.rs` 增加：
@@ -562,45 +594,73 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 
 ### M0 基线记录表（2026-11-21 实测，Apple M5 / macOS 27.2.1 / release）
 
+下表是实际耗时（elapsed），不是节省的时间；优化后原型见本节末尾。
+
 | 场景 | 1M/key | 10M/key | 备注 |
 |---|---|---|---|
-| 改 end（只写原语） | 1.9 ms | 19.4 ms | 按 id 扫桶 + is_sorted |
-| 改 end + `rebuild_dirty` | 20.0 ms | 199.5 ms | 真实铅笔路径 |
-| 改 velocity（只写原语） | 1.9 ms | 19.7 ms | 按 id 扫桶 + is_sorted |
-| 改 velocity + `rebuild_dirty` | 20.0 ms | 195.3 ms | 真实铅笔/力度路径 |
-| 移动（只写原语） | 1.7 ms | 17.8 ms | remove_by_id + insert |
-| 移动 + `rebuild_dirty` | 20.0 ms | 193.8 ms | 真实移动路径 |
-| 左拉伸（start 改变） | 38~44 ms | 497.5 ms | 10M：sort 289.9 + stats 207.6 |
-| 删除（只写原语） | 1.7 ms | 18.6 ms | remove_by_id + rebuild max_ends |
-| 删除 + `rebuild_dirty` | 20.2 ms | 147.6 ms | 真实单删路径 |
-| `insert_batch_sorted` 10 万 | 16.4 ms | 64.6 ms | 真实 NoteBucket |
-| undo 列式 delta（1M / 10M） | 7.87 B/音符 | 7.87 B/音符 | 编码 11.8 / 86.6 ms，解码 12.3 / 109.3 ms |
-| undo 列式 + zstd3（1M / 10M） | 4.37 B/音符 | 3.99 B/音符 | 编码 154.7 / 832.2 ms，解码 28.0 / 179.0 ms |
+| 改 end（只写原语） | 1.4 ms | 11.3 ms | 按 id 扫桶 + is_sorted |
+| 改 end + `rebuild_dirty` | 11.6 ms | 91.1 ms | 真实铅笔路径 |
+| 改 velocity（只写原语） | 1.4 ms | 10.6 ms | 按 id 扫桶 + is_sorted |
+| 改 velocity + `rebuild_dirty` | 10.1 ms | 88.5 ms | 真实铅笔/力度路径 |
+| 移动（只写原语） | 0.54 ms | 5.2 ms | remove_by_id + insert |
+| 移动 + `rebuild_dirty` | 8.4 ms | 83.3 ms | 真实移动路径 |
+| 左拉伸（start 改变） | 15~17 ms | 169.0 ms | 10M：sort 91.7 + stats 77.3 |
+| 删除（只写原语） | 0.44 ms | 5.1 ms | remove_by_id + rebuild max_ends |
+| 删除 + `rebuild_dirty` | 8.3 ms | 81.5 ms | 真实单删路径 |
+| `insert_batch_sorted` 10 万 | 5.6 ms | 35.5 ms | 真实 NoteBucket |
+| undo 列式 delta（1M / 10M） | 7.87 B/音符 | 7.87 B/音符 | 编码 5.4 / 51.9 ms，解码 5.8 / 58.1 ms |
+| undo 列式 + zstd1（1M / 10M） | 5.20 B/音符 | 4.72 B/音符 | 编码 12.1 / 213.9 ms，解码 8.4 / 92.9 ms |
+| undo 列式 + zstd3（1M / 10M） | 4.37 B/音符 | 3.99 B/音符 | 编码 49.3 / 496.4 ms，解码 11.5 / 114.5 ms |
+| undo 列式 + lz4（1M / 10M） | 7.06 B/音符 | 6.37 B/音符 | 编码 17.2 / 220.2 ms，解码 3.7 / 37.6 ms |
 
 ### M0 结果解读
 
-1. **10M 单 key 的真实铅笔路径约 195~200 ms/帧**，目标是 ≤100µs，差约 2000 倍。即使只修 id 查找和 sort，纯写原语仍有 18~20 ms，必须同时把 `rebuild_dirty` 的全桶 stats 扫描改成增量。
-2. **`rebuild_dirty` 是主要成本**：10M 下一次约 150~180 ms，占完整路径的 80%~90%。它按脏 key 重扫整个桶重建 `bucket_track_stats`，与「改一个音符」不匹配。这是 P0 必须一起修的原因。
-3. **左拉伸（start 改变）10M 约 497 ms**：290 ms 全桶 sort + 208 ms stats。当前 `sort()` 会做 flat 全量拷贝 + 排序 + 重建块，单帧内存峰值约 3× 桶（480MB），必须改成单音符重定位。
-4. **批量插入时间可接受，但峰值内存未测**：10M 桶插 10 万音符 64.6 ms；`insert_batch_sorted` 的 2× 峰值仍需单独用 memtrace 验证。
+> 运行波动：同一台机器连续跑三次，首次带编译/后台负载时慢约 2×；下表取第三次空闲值。结论按数量级看，不按单次精确值看。
+
+1. **10M 单 key 的真实铅笔路径约 81~91 ms/帧**，目标是 ≤100µs，差约 1000 倍。即使只修 id 查找和 sort，纯写原语仍有 5~11 ms，必须同时把 `rebuild_dirty` 的全桶 stats 扫描改成增量。
+2. **`rebuild_dirty` 是主要成本**：10M 下一次约 77~80 ms，占完整路径的 85% 左右。它按脏 key 重扫整个桶重建 `bucket_track_stats`，与「改一个音符」不匹配。这是 P0 必须一起修的原因。原型里增量统计包含在 2.7µs 的 `改 end` 里（locate + 单块写 + stats + max_end），**不需要再单独做 stats bench**。
+3. **左拉伸（start 改变）10M 约 169 ms**：92 ms 全桶 sort + 77 ms stats。当前 `sort()` 会做 flat 全量拷贝 + 排序 + 重建块，单帧内存峰值约 3× 桶（480MB），必须改成单音符重定位。
+4. **批量插入时间可接受，但峰值内存未测**：10M 桶插 10 万音符 35.5 ms；`insert_batch_sorted` 的 2× 峰值仍需单独用 memtrace 验证。
 5. **undo 压缩的初步结论**：
-   - 列式 delta：7.87 B/音符（20B → -61%），10M 编码 86.6 ms、解码 109.3 ms；外推 100M 约 0.9 s / 1.1 s。
-   - 列式 + zstd3：3.99 B/音符（-80%），但 10M 编码 832 ms、解码 179 ms；外推 100M 编码约 8 s，**不适合在编辑提交时做**。
-   - 如果要做，优先「列式 delta，不叠 zstd」；100M 解码约 1 秒是否可接受，需要你拍板。若不可接受，就保持现状或只做历史预算。
+   - 当前 `Vec<(Note,u8)>`：20B/音符（16B Note + key + 3B 对齐 pad）。
+   - 按 key 分组 `Vec<Note>`：16B/音符，10M 拷贝 15.9 ms（20B 是 21.4 ms），无编码/解码成本，是最便宜的 -20%。
+   - 列式 delta：7.87 B/音符（-61%），10M 编码 51.9 ms、解码 58.1 ms；外推 100M 约 0.5 s / 0.6 s。
+   - zstd1：4.72 B/音符，10M 编码 213.9 ms、解码 92.9 ms；外推 100M 约 2.1 s / 0.9 s，提交时仍偏慢。
+   - zstd3：3.99 B/音符，但 10M 编码 496.4 ms、解码 114.5 ms；外推 100M 编码约 5 s，**不适合在编辑提交时做**。
+   - lz4：6.37 B/音符，10M 编码 220.2 ms、解码 37.6 ms；编码不占优，解码快，整体不如列式无压缩。
+   - 如果要做，优先「按 key 分组 16B」做保底，再上「列式 delta，不叠通用压缩」；100M 解码约 1 秒你已表示可接受。zstd/lz4 的编码都不值得放在提交路径。
 6. 1M 的数字大约是同场景 10M 的 1/10；P0 的目标和验收应以 10M 为准。
 
 注意：这是单 key 均匀分布的合成数据，不是 start.mid 的真实分布；真实曲目的最密集 key 可能更极端，但数量级已经足够说明问题。M4 修完后用同一命令复跑，不换数据。
 
+### 优化后原型（bench 内实现，非生产代码）
+
+为了回答“优化前后到底差多少”，在 bench 里按计划算法写了一个 `ProtoBucket`：`locate_at` + 单块 `remove/insert` + 增量 `ProtoStats`，**没有**改生产代码。它不是最终实现，但数量级可信。
+
+| 操作 | 现状 10M | 原型 10M | 加速 | 说明 |
+|---|---:|---:|---:|---|
+| 改 end + stats | 91.1 ms | 2.7 µs | ~33,700× | locate + 单块写 + O(1) stats |
+| 左拉伸（start 改变） | 169.0 ms | 43.4 µs | ~3,900× | remove + insert + 块级 meta 刷新 |
+| 删除 + stats | 81.5 ms | 14.9 µs | ~5,500× | locate + remove + O(1) stats |
+
+1M 原型：改 end 1.4 µs、左拉伸 39.1 µs、删除 10.8 µs；和 10M 同一量级。
+
+原型边界：
+
+- 用 `Vec<Vec<Note>>`，没有 `Arc<Vec<Note>>` 的 COW；真实编辑若音频线程持有快照，会多一次 ≤1MB 块复制，左拉伸预计从 43µs 涨到 100µs 左右，仍远低于 100ms。
+- 没有算 `capture_snapshot`、undo 入栈、`has_overlapping_note_excluding` 和渲染；这些是 M1 修完后要继续测的完整 `pencil_drag_note` 路径。
+- 原型证明：**100µs 的左拉伸目标是可达的**；改 end / 删除可以稳定进 100µs 以内。若真实 COW 后左拉伸超过 100µs，再考虑同块 `copy_within`/rotate 合并两次 memmove。
+
 | 阶段 | 内容 | 依赖 | 预估 |
 |---|---|---|---|
-| M0 | 补 bench + 尺寸断言 + 过期注释修正；跑 1~7，记录基线 | 无 | 1~2 天 |
+| M0 | 补 bench + 尺寸断言 + 过期注释修正；跑 1~7，记录基线 | 无 | 已完成（2026-11-21） |
 | M1 | `NoteBucket::locate_at` + `update_at` + `remove_at` + 单元测试/对拍；模型层 `apply_note_stat_delta` 增量统计 | M0 通过 | 1~2 天 |
-| M2 | 模型层 `*_at` API；迁移铅笔/力度/单删/`set_note_end_tick`；删除无条件 sort 和单点 `rebuild_dirty` | M1 | 1~2 天 |
+| M2 | 模型层 `*_at` API；迁移铅笔/力度/单删/`set_note_end_tick`；删除无条件 sort 和单点 `rebuild_dirty`；`try_alloc_note_id` + 总量 guard | M1 | 1~2 天 |
 | M3 | `delete_notes` / `move_clip` / `loop_clip_*` 批量化；COW 范围测试 | M2 | 1~2 天 |
 | M4 | 复跑 bench 对比，确认目标；清理旧单点 by-id API | M3 | 0.5 天 |
 | M5 | S3-1 注释/断言；关闭 LOD 时跳过摘要构建/上传；S3-4 `insert_batch_sorted` 流式归并 | 可与 M1~M4 并行 | 1~1.5 天 |
 | M6 | S3-2/S3-3：8 档仍全量常驻，只做逐档构建/上传峰值优化和逐 key 重建评估 | M5 | 先测后估 |
-| M7 | S3-5 undo delta：只有 M0 数据证明解码够快、省内存值得，才实现 | M0 数据 | 待定 |
+| M7 | S3-5 undo delta：先补 100M 编解码 bench；通过后先做 16B 分组，再评估列式 7.87B | M0 数据 | 待定 |
 | M8 | 移动端专项：`NoteLayerCache` 窗口外桶释放、`LayerSlot` 缩容（先测后做） | M0 数据 | 待定 |
 
 P0（M1~M4）先合入，再碰内存结构。不要一边改音符布局一边改写路径，出问题无法定位。
@@ -630,13 +690,14 @@ P0（M1~M4）先合入，再碰内存结构。不要一边改音符布局一边�
 2. GPU 摘要 8 档必须常驻，不做「首次进入某档再准备」；只优化构建/上传峰值。见 3.3。
 3. undo 压缩必须先 bench。见 3.6。
 4. 先做 bench，再开始修；M0 是硬门禁。见第 5 节。
+5. undo 100M 列式解码约 1s 可接受；列式 delta 进入候选，zstd/lz4 不进入提交路径。见 3.6.4。
 
 待定：
 
-1. bench 的验收线：10M 桶单点 update/remove/move ≤100µs 是否够用？undo 1 亿音符的列式解码可接受多少 ms（bench 外推约 1.1s）？
+1. 左拉伸原型 43.4µs（无 COW），真实预计 ~100µs；目标定 100µs 还是 200µs？
 2. 移动端 4~6GB 的目标工程规模是多少（1 亿 / 5000 万 / 更小）？这决定 undo 压缩、`NoteLayerCache` 桶释放、保存峰值三者的优先级。
 3. 保存峰值（1.64 亿约 3.9GB）是否要单独排期？移动端上它可能比音符结构更早触发 OOM。
-4. 是否同意先只做 P0（M0~M4），内存结构等实测数据出来再排期。
+4. 是否同意先只做 P0（M1~M4），内存结构等实测数据出来再排期。
 
 ---
 
@@ -690,7 +751,15 @@ P0（M1~M4）先合入，再碰内存结构。不要一边改音符布局一边�
 - **单 key**：没有比 u32::MAX 更低的显式限制；`NoteBucket` 本身可以继续分块，`NoteCursor.chunk` 也够大。真正的限制是内存：10M/key = 160MB 模型，100M/key = 1.6GB 模型。
 - **单轨**：受 `track: u16` 限制最多 65536 轨；单轨音符数受 u32 限制。
 
-一个需要补的安全口子：`alloc_note_id()` 用的是 `wrapping_add(1)`，目前没有在接近 u32::MAX 时拒绝分配。用户说总量最大 u32，但代码里没有显式 guard；如果真到达上限，id 会回绕并可能与旧音符冲突。建议在导入/新增路径加一个明确的「达到 u32::MAX 就报错/停止分配」的检查，而不是依赖回绕。本次不改代码，先记录。
+一个必须补的安全口子：`alloc_note_id()` 用的是 `wrapping_add(1)`，`NoteLoader::finish_with_progress` 里的 `max_id_seen + 1` 也没有 checked。用户说总量最大 u32，但代码里没有显式 guard；如果真到达上限，id 会回绕并可能与旧音符冲突。计划：
+
+1. `alloc_note_id` 改成 `try_alloc_note_id() -> Option<u32>`，用 `checked_add(1)`；到 `u32::MAX` 返回 `None`，不再回绕。
+2. 导入/加载：先拿到总数，超过 `u32::MAX - 1` 直接返回错误，不进入 `NoteLoader`；`max_id_seen.checked_add(1)` 同步处理。
+3. 编辑：粘贴/复制/新建音符走 `try_alloc_note_id`；`None` 时中止本次编辑并给用户错误，不写半截数据。
+4. 回归测试：把 `next_note_id` 设到 `u32::MAX`，断言 `try_alloc_note_id` 返回 `None`；导入计数超过上限时返回错误。
+5. 这是一次小的 API 迁移，不做「超过就 panic」的临时方案；`debug_assert` 不能替代发布版 guard。
+
+本次不改代码，先从计划里定为 M2 的必做项。
 
 因此 bench 的规模选择：
 
