@@ -191,8 +191,7 @@ pub fn note_velocity(s: &RenderScene, track: u16, start_tick: u32, key: u8) -> O
     let doc = s.document.as_ref()?;
     doc.data
         .model
-        .key_notes(key)
-        .iter()
+        .key_notes_in_range(key, start_tick, start_tick.saturating_add(1))
         .find(|n| n.track == track && n.start_tick == start_tick)
         .map(|n| n.velocity)
 }
@@ -208,8 +207,7 @@ pub fn note_at_bounds(
     let doc = s.document.as_ref()?;
     doc.data
         .model
-        .key_notes(key)
-        .iter()
+        .key_notes_in_range(key, start_tick, start_tick.saturating_add(1))
         .find(|n| n.track == track && n.start_tick == start_tick && n.end_tick == end_tick)
         .copied()
 }

@@ -13,8 +13,13 @@ pub fn hit_note(s: &RenderScene, geom: &PrGeom, x: f32, y: f32) -> Option<NoteHi
     // 时间轴方向允许外扩 NOTE_HIT_PAD 像素；命中多个时取离按下点最近的音符，
     // 避免外扩后抢到相邻音符。
     let pad_ticks = (NOTE_HIT_PAD / geom.ppu.max(0.0001)).ceil() as i64;
+    // 只扫按下点附近的区间；key_notes_in_range 内部还会按 max_note_len
+    // 向左放宽，长音符也不会漏。避免黑乐谱单 key 上千万音符时全桶扫描。
+    let pad = pad_ticks.max(0).min(u32::MAX as i64) as u32;
+    let lo = tick_u.saturating_sub(pad);
+    let hi = tick_u.saturating_add(pad).saturating_add(1);
     let mut best: Option<(f32, NoteHit)> = None;
-    for note in doc.data.model.key_notes(key).iter() {
+    for note in doc.data.model.key_notes_in_range(key, lo, hi) {
         if f64::from(note.start_tick) > f64::from(tick_u) + f64::from(pad_ticks as u32)
             || i64::from(note.end_tick) < i64::from(tick_u) - pad_ticks
         {
