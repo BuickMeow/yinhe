@@ -49,10 +49,13 @@ pub(crate) fn upload_all_with_summaries(
     notes: &[NoteInstance],
     offsets: &[u32; KEY_COUNT + 1],
     revisions: &[u64; KEY_COUNT],
+    lod_enabled: bool,
 ) {
-    let summaries = build_summaries(notes, offsets);
     pianoroll.upload_all_notes_for_cull(notes, offsets, revisions);
-    pianoroll.upload_summary_for_cull(&summaries);
+    if lod_enabled {
+        let summaries = build_summaries(notes, offsets);
+        pianoroll.upload_summary_for_cull(&summaries);
+    }
 }
 
 /// 单 key 增量上传音符 + 摘要。返回 false 表示需回退全量（key 或摘要层缺失）。
@@ -61,9 +64,13 @@ pub(crate) fn upload_key_with_summaries(
     key: u8,
     notes: &[NoteInstance],
     revision: u64,
+    lod_enabled: bool,
 ) -> bool {
     if !pianoroll.try_incremental_key_upload(key, notes, revision) {
         return false;
+    }
+    if !lod_enabled {
+        return true;
     }
     for (level, summary) in build_key_summaries(key, notes).iter().enumerate() {
         if !pianoroll.try_incremental_summary_key(level, key, summary) {
@@ -148,6 +155,7 @@ pub(crate) fn start_rebuild(
     hidden_notes: HashSet<(u16, u32, u8)>,
     track_visible: Vec<bool>,
     note_revisions: [u64; KEY_COUNT],
+    lod_enabled: bool,
     revision: u64,
     hidden_hash: u64,
     tv_hash: u64,
@@ -159,7 +167,11 @@ pub(crate) fn start_rebuild(
         .spawn(move || {
             let (notes, offsets) =
                 yinhe_wgpu::build_all_notes(model.as_ref(), &hidden_notes, &track_visible);
-            let summaries = build_summaries(&notes, &offsets);
+            let summaries = if lod_enabled {
+                build_summaries(&notes, &offsets)
+            } else {
+                Vec::new()
+            };
             let _ = tx.send(BuildResult {
                 notes,
                 offsets,
@@ -281,6 +293,7 @@ pub struct GpuUploadState<'a> {
     pub midi_arc: Option<&'a Arc<YinModel>>,
     pub revision: u64,
     pub note_revisions: &'a [u64; KEY_COUNT],
+    pub lod_enabled: bool,
     pub track_visible: &'a [bool],
     /// 选中轨道集合：驱动 cull 的「选中置顶」分区（每帧同步，内部去重）。
     pub track_selected: &'a HashSet<u16>,
@@ -310,6 +323,7 @@ struct FrameCtx<'a> {
     midi_arc: Option<&'a Arc<YinModel>>,
     revision: u64,
     note_revisions: &'a [u64; KEY_COUNT],
+    lod_enabled: bool,
     track_visible: &'a [bool],
     hidden_notes: &'a HashSet<(u16, u32, u8)>,
     tv_hash: u64,
@@ -402,9 +416,10 @@ fn full_upload(
     hidden_notes: &HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     note_revisions: &[u64; KEY_COUNT],
+    lod_enabled: bool,
 ) {
     let (all_notes, offsets) = yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-    upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions);
+    upload_all_with_summaries(pianoroll, &all_notes, &offsets, note_revisions, lod_enabled);
 }
 
 /// 对给定 key 逐个构建 + 增量上传（音符 + 摘要）。
@@ -415,11 +430,18 @@ fn upload_dirty_keys(
     hidden_notes: &HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     note_revisions: &[u64; KEY_COUNT],
+    lod_enabled: bool,
     keys: impl Iterator<Item = u8>,
 ) -> bool {
     for key in keys {
         let key_notes = yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
-        if !upload_key_with_summaries(pianoroll, key, &key_notes, note_revisions[key as usize]) {
+        if !upload_key_with_summaries(
+            pianoroll,
+            key,
+            &key_notes,
+            note_revisions[key as usize],
+            lod_enabled,
+        ) {
             return false;
         }
     }
@@ -490,6 +512,7 @@ fn drive_rebuild(
                     ctx.hidden_notes,
                     ctx.track_visible,
                     ctx.note_revisions,
+                    ctx.lod_enabled,
                 );
                 tracking.mark_uploaded(
                     note_key_value,
@@ -513,6 +536,7 @@ pub fn upload(state: GpuUploadState) {
         midi_arc,
         revision,
         note_revisions,
+        lod_enabled,
         track_visible,
         track_selected,
         hidden_notes,
@@ -533,6 +557,7 @@ pub fn upload(state: GpuUploadState) {
         midi_arc,
         revision,
         note_revisions,
+        lod_enabled,
         track_visible,
         hidden_notes,
         tv_hash,
@@ -588,6 +613,7 @@ pub fn upload(state: GpuUploadState) {
                 hidden_notes,
                 track_visible,
                 note_revisions,
+                lod_enabled,
             );
         }
         UploadPath::HiddenIncremental => {
@@ -603,6 +629,7 @@ pub fn upload(state: GpuUploadState) {
                 hidden_notes,
                 track_visible,
                 note_revisions,
+                lod_enabled,
                 keys,
             ) {
                 // Fallback: full upload (some key's buffer was never created).
@@ -612,6 +639,7 @@ pub fn upload(state: GpuUploadState) {
                     hidden_notes,
                     track_visible,
                     note_revisions,
+                    lod_enabled,
                 );
             }
         }
@@ -629,6 +657,7 @@ pub fn upload(state: GpuUploadState) {
                     hidden_notes,
                     track_visible,
                     note_revisions,
+                    lod_enabled,
                     dirty_keys.into_iter(),
                 )
             {
@@ -639,6 +668,7 @@ pub fn upload(state: GpuUploadState) {
                     hidden_notes,
                     track_visible,
                     note_revisions,
+                    lod_enabled,
                 );
             }
         }
@@ -651,6 +681,7 @@ pub fn upload(state: GpuUploadState) {
                     hidden_notes,
                     track_visible,
                     note_revisions,
+                    lod_enabled,
                 );
                 return;
             };
@@ -659,6 +690,7 @@ pub fn upload(state: GpuUploadState) {
                 hidden_notes.clone(),
                 track_visible.to_vec(),
                 *note_revisions,
+                lod_enabled,
                 revision,
                 hidden_hash,
                 tv_hash,
@@ -676,6 +708,7 @@ pub fn upload(state: GpuUploadState) {
                         hidden_notes,
                         track_visible,
                         note_revisions,
+                        lod_enabled,
                     );
                 }
             }
@@ -953,6 +986,7 @@ mod tests {
             midi_arc: Some(&model),
             revision: 1,
             note_revisions: &note_revisions,
+            lod_enabled: true,
             track_visible: &tv0,
             track_selected: &HashSet::new(),
             hidden_notes: &hidden,
@@ -987,6 +1021,7 @@ mod tests {
             midi_arc: Some(&model),
             revision: 1,
             note_revisions: &note_revisions,
+            lod_enabled: true,
             track_visible: &tv1,
             track_selected: &HashSet::new(),
             hidden_notes: &hidden,
@@ -1022,6 +1057,7 @@ mod tests {
                 midi_arc: Some(&model),
                 revision: 1,
                 note_revisions: &note_revisions,
+                lod_enabled: true,
                 track_visible: &tv1,
                 track_selected: &HashSet::new(),
                 hidden_notes: &hidden,
@@ -1056,6 +1092,7 @@ mod tests {
             midi_arc: Some(&model),
             revision: 1,
             note_revisions: &note_revisions,
+            lod_enabled: true,
             track_visible: &tv0b,
             track_selected: &HashSet::new(),
             hidden_notes: &hidden,
@@ -1076,6 +1113,7 @@ mod tests {
                 midi_arc: Some(&model),
                 revision: 1,
                 note_revisions: &note_revisions,
+                lod_enabled: true,
                 track_visible: &tv0b,
                 track_selected: &HashSet::new(),
                 hidden_notes: &hidden,
@@ -1115,6 +1153,7 @@ mod tests {
                 midi_arc: Some(&model),
                 revision: 1,
                 note_revisions: &note_revisions,
+                lod_enabled: true,
                 track_visible: &tv0b,
                 track_selected: &HashSet::new(),
                 hidden_notes: &hidden,
@@ -1159,7 +1198,7 @@ mod tests {
         }
 
         let (sync_notes, sync_offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
-        let mut rb = start_rebuild(model, hidden, tv, revisions, 42, 7, 9)
+        let mut rb = start_rebuild(model, hidden, tv, revisions, true, 42, 7, 9)
             .expect("测试环境 spawn 重建线程不应失败");
         let result = match &mut rb {
             CullRebuild::Building { rx, .. } => match rx.recv() {
@@ -1195,11 +1234,11 @@ mod tests {
 
         // 首帧全量上传（模拟初次加载：128 个 key 都有 GPU buffer + 摘要层）。
         let (all_notes, offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
-        upload_all_with_summaries(&mut renderer, &all_notes, &offsets, &revisions);
+        upload_all_with_summaries(&mut renderer, &all_notes, &offsets, &revisions, true);
 
         // 模拟 track_visible 变化 → 启动后台重建（tv_hash = 99）。
         let tv2 = vec![true, true, true, true];
-        let mut rb = start_rebuild(model, hidden, tv2, revisions, 42, 7, 99)
+        let mut rb = start_rebuild(model, hidden, tv2, revisions, true, 42, 7, 99)
             .expect("测试环境 spawn 重建线程不应失败");
 
         let mut guard = 0u32;
@@ -1277,6 +1316,7 @@ mod tests {
             midi_arc: Some(&model),
             revision: 1,
             note_revisions: &note_revisions,
+            lod_enabled: true,
             track_visible: &tv,
             track_selected: &HashSet::new(),
             hidden_notes: &empty,
@@ -1312,6 +1352,7 @@ mod tests {
             midi_arc: Some(&model),
             revision: 1,
             note_revisions: &note_revisions,
+            lod_enabled: true,
             track_visible: &tv,
             track_selected: &HashSet::new(),
             hidden_notes: &hidden,
@@ -1346,6 +1387,7 @@ mod tests {
             midi_arc: Some(&model),
             revision: 1,
             note_revisions: &note_revisions,
+            lod_enabled: true,
             track_visible: &tv,
             track_selected: &HashSet::new(),
             hidden_notes: &empty,
@@ -1501,6 +1543,7 @@ mod tests {
                     midi_arc: Some(&model),
                     revision: 1,
                     note_revisions: &note_revisions,
+                    lod_enabled: true,
                     track_visible: tv,
                     track_selected: &HashSet::new(),
                     hidden_notes: &hidden,

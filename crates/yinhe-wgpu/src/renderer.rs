@@ -493,7 +493,17 @@ impl InstanceRenderer {
 
     /// 设置是否启用 LOD 摘要层（设置项）。
     pub fn set_lod_enabled(&mut self, enabled: bool) {
+        if self.lod_enabled == enabled {
+            return;
+        }
         self.lod_enabled = enabled;
+        if enabled {
+            // 关闭期间没有维护摘要；重新开启时强制全量上传重建。
+            self.clear_cull();
+        } else {
+            // 关闭时释放 8 档摘要显存，原始层不动。
+            self.cull.clear_summaries();
+        }
     }
 
     /// AM 力度条摘要：按 ppu 缩小时 `prepare_automation` 用它切片生成 bar。

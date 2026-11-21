@@ -83,6 +83,7 @@ pub(crate) fn upload_and_prepare(
             midi_arc,
             revision,
             note_revisions,
+            lod_enabled,
             track_visible,
             track_selected: &z_selected,
             hidden_notes,

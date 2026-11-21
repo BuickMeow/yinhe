@@ -731,6 +731,13 @@ impl CullState {
         self.notes_dirty = false;
     }
 
+    /// 清空 8 档摘要层，释放显存；原始层不动。
+    pub(crate) fn clear_summaries(&mut self) {
+        for level in &mut self.summary_levels {
+            level.clear();
+        }
+    }
+
     /// Dispatch the cull pass per key. Each key writes into its own visible
     /// buffer's fixed sparse slots + its per-key draw-args buffer.
     ///
