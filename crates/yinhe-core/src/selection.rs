@@ -195,9 +195,13 @@ impl Selection {
             return;
         }
         let pending_from = self.materialized_rects;
-        let bits = self.members.get_or_insert_with(NoteBitset::default);
-        // 直接按索引读取 rects（与 members 是不同字段，可同时借用），
-        // 避免为绕借用把待物化 rect 整段拷贝一份。
+        // 新选区最常见的状态是 members=None：用 builder 一次分配、O(1) 置位、
+        // 最后只取一次版本号。已有成员时只能逐位合并（新增 rect 通常很少）。
+        let mut builder = self
+            .members
+            .is_none()
+            .then(yinhe_types::NoteBitsetBuilder::new);
+        let mut existing = self.members.as_mut();
         for i in pending_from..self.rects.len() {
             let (tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) = self.rects[i];
             for key in key_lo..=key_hi {
@@ -212,9 +216,16 @@ impl Selection {
                     if n.id == 0 {
                         continue; // 发号器哨兵（未分配），不进位图
                     }
-                    bits.insert(n.id);
+                    if let Some(builder) = builder.as_mut() {
+                        builder.insert(n.id);
+                    } else if let Some(bits) = existing.as_mut() {
+                        bits.insert(n.id);
+                    }
                 }
             }
+        }
+        if let Some(builder) = builder {
+            self.members = Some(builder.build());
         }
         self.materialized_rects = self.rects.len();
     }
@@ -229,13 +240,11 @@ impl Selection {
 
     /// 用给定 id 重建显式成员集（复制/粘贴后让选区跟随新音符）。
     pub fn set_members(&mut self, ids: impl IntoIterator<Item = u32>) {
-        let mut bits = NoteBitset::default();
+        let mut builder = yinhe_types::NoteBitsetBuilder::new();
         for id in ids {
-            if id != 0 {
-                bits.insert(id);
-            }
+            builder.insert(id);
         }
-        self.members = Some(bits);
+        self.members = Some(builder.build());
         // 现有 rects 视作已物化（成员由调用方精确给出）。
         self.materialized_rects = self.rects.len();
     }
@@ -273,9 +282,11 @@ impl Selection {
         };
         let pending: Vec<(u32, u32, u8, u8, u16, u16)> =
             self.rects[self.materialized_automation_rects..].to_vec();
-        let bits = self
+        let mut builder = self
             .automation_members
-            .get_or_insert_with(NoteBitset::default);
+            .is_none()
+            .then(yinhe_types::NoteBitsetBuilder::new);
+        let mut existing = self.automation_members.as_mut();
         for (tick_start, tick_end, _, _, track_lo, track_hi) in pending {
             let hi = (track_hi as usize).min(last_track);
             for track_idx in track_lo as usize..=hi {
@@ -284,12 +295,20 @@ impl Selection {
                 };
                 for lane in &track.automation_lanes {
                     for evt in lane.events_in_range(tick_start, tick_end) {
-                        if evt.id != 0 {
+                        if evt.id == 0 {
+                            continue;
+                        }
+                        if let Some(builder) = builder.as_mut() {
+                            builder.insert(evt.id);
+                        } else if let Some(bits) = existing.as_mut() {
                             bits.insert(evt.id);
                         }
                     }
                 }
             }
+        }
+        if let Some(builder) = builder {
+            self.automation_members = Some(builder.build());
         }
         self.materialized_automation_rects = self.rects.len();
     }
@@ -313,13 +332,11 @@ impl Selection {
 
     /// 用给定 id 重建自动化成员集（复制后让选择跟随副本）。
     pub fn set_automation_members(&mut self, ids: impl IntoIterator<Item = u32>) {
-        let mut bits = NoteBitset::default();
+        let mut builder = yinhe_types::NoteBitsetBuilder::new();
         for id in ids {
-            if id != 0 {
-                bits.insert(id);
-            }
+            builder.insert(id);
         }
-        self.automation_members = Some(bits);
+        self.automation_members = Some(builder.build());
         self.materialized_automation_rects = self.rects.len();
     }
 
