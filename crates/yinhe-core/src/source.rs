@@ -5,7 +5,7 @@
 //! that already speaks NoteSource (PianoRoll, Arrangement) works without
 //! changes.
 
-use yinhe_types::{NoteBucket, NoteSource, TimeSigEvent};
+use yinhe_types::{NoteBucket, NoteRangeIter, NoteSource, TimeSigEvent};
 
 use crate::model::YinModel;
 
@@ -32,6 +32,19 @@ impl NoteSource for YinModel {
 
     fn max_note_len(&self) -> u32 {
         self.max_note_len
+    }
+
+    /// 用每个 key 自己的最长音符收紧左界：工程里某条超长 pad 不应拖慢
+    /// 其他 key 的范围查询。统计为 0（手工构造的模型）时回退全局值，保证不漏。
+    fn key_notes_in_range(&self, key: u8, tick_start: u32, tick_end: u32) -> NoteRangeIter<'_> {
+        let key_max = self.max_note_len_by_key[key as usize];
+        let max_len = if key_max == 0 {
+            self.max_note_len
+        } else {
+            key_max
+        };
+        let lo = tick_start.saturating_sub(max_len);
+        self.notes[key as usize].range(lo, tick_end)
     }
 
     fn display_key_count(&self) -> u16 {
@@ -70,6 +83,29 @@ mod tests {
             velocity: 100,
             track: 0,
         }
+    }
+
+    #[test]
+    fn key_notes_in_range_uses_per_key_max_len() {
+        let mut model = YinModel::new_empty_with_16_tracks();
+        model.insert_note(
+            60,
+            Note {
+                id: 1,
+                start_tick: 0,
+                end_tick: 100_000,
+                velocity: 100,
+                track: 0,
+            },
+        );
+        model.insert_note(61, note(2, 5_000));
+        model.rebuild_dirty();
+
+        assert_eq!(model.max_note_len_by_key[60], 100_000);
+        assert_eq!(model.max_note_len_by_key[61], 120);
+        // key 61 只有短音符：10_000 附近的范围不应把 5_000 的音符带出来。
+        assert_eq!(model.key_notes_in_range(61, 10_000, 11_000).count(), 0);
+        assert_eq!(model.key_notes_in_range(61, 5_000, 5_200).count(), 1);
     }
 
     /// AR lane 音域：常规 128；出现 key ≥ 128 的音符后切到 256，
