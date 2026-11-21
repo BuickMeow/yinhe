@@ -34,17 +34,10 @@ impl NoteSource for YinModel {
         self.max_note_len
     }
 
-    /// 用每个 key 自己的最长音符收紧左界：工程里某条超长 pad 不应拖慢
-    /// 其他 key 的范围查询。统计为 0（手工构造的模型）时回退全局值，保证不漏。
+    /// 用该 key 的块级 `max_end_tick` 收紧左界：整块在视口左侧结束就跳过。
+    /// 长音符只影响自己所在的 65536 音符块，不再拖慢其他块/其他 key。
     fn key_notes_in_range(&self, key: u8, tick_start: u32, tick_end: u32) -> NoteRangeIter<'_> {
-        let key_max = self.max_note_len_by_key[key as usize];
-        let max_len = if key_max == 0 {
-            self.max_note_len
-        } else {
-            key_max
-        };
-        let lo = tick_start.saturating_sub(max_len);
-        self.notes[key as usize].range(lo, tick_end)
+        self.notes[key as usize].range_including_long(tick_start, tick_end)
     }
 
     fn display_key_count(&self) -> u16 {
@@ -83,32 +76,6 @@ mod tests {
             velocity: 100,
             track: 0,
         }
-    }
-
-    #[test]
-    fn key_notes_in_range_uses_per_key_max_len() {
-        let mut model = YinModel::new_empty_with_16_tracks();
-        model.insert_note(
-            60,
-            Note {
-                id: 1,
-                start_tick: 0,
-                end_tick: 100_000,
-                velocity: 100,
-                track: 0,
-            },
-        );
-        model.insert_note(61, note(2, 5_000));
-        // 脏桶在 rebuild 前按未知处理，保证并发只读查询不漏。
-        assert_eq!(model.max_note_len_by_key[60], u32::MAX);
-        assert_eq!(model.max_note_len_by_key[61], u32::MAX);
-        model.rebuild_dirty();
-
-        assert_eq!(model.max_note_len_by_key[60], 100_000);
-        assert_eq!(model.max_note_len_by_key[61], 120);
-        // key 61 只有短音符：10_000 附近的范围不应把 5_000 的音符带出来。
-        assert_eq!(model.key_notes_in_range(61, 10_000, 11_000).count(), 0);
-        assert_eq!(model.key_notes_in_range(61, 5_000, 5_200).count(), 1);
     }
 
     /// AR lane 音域：常规 128；出现 key ≥ 128 的音符后切到 256，

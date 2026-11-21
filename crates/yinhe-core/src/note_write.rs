@@ -27,9 +27,7 @@ impl YinModel {
         f: impl FnOnce(&mut Note),
     ) -> Option<Note> {
         let bucket = Arc::make_mut(&mut self.notes[key as usize]);
-        let n = bucket.find_mut(id)?;
-        f(n);
-        let updated = *n;
+        let updated = bucket.update_by_id(id, f)?;
         bucket.sort();
         self.mark_dirty(key);
         Some(updated)

@@ -897,17 +897,10 @@ pub struct YinModel {
     pub note_count: u64,
     pub tick_length: u64,
     /// 全曲最长音符长度（tick），只增不减：删除最长音符后保留旧值只会让
-    /// 视口查询左边界略偏左，绝不漏音符。由 `load_track_notes` / `rebuild` /
-    /// `rebuild_dirty` / `rescale_ppq` 维护；供 `NoteSource::max_note_len` 返回。
+    /// 视口查询左边界略偏左，绝不漏音符。保留给 `NoteSource::max_note_len`
+    /// 的默认实现/其他消费方；`YinModel` 自己的范围查询已改用块级
+    /// `NoteBucket::max_ends`，不再依赖这个全局值。
     pub max_note_len: u32,
-    /// 每个 key 自己的最长音符长度（tick）。
-    ///
-    /// `key_notes_in_range` 用 `max_note_len_by_key[key]` 收紧左界；否则工程里
-    /// 任意一条超长音符（pad/环境音）都会让所有 key 的范围查询从很早的 tick
-    /// 开始扫。`mark_dirty` 会先写成 `u32::MAX`（未知，保证不漏），
-    /// `rebuild_dirty` / `rebuild_stats_only` / 加载完成后写回精确值。
-    /// 0 = 尚未统计，回退到全局 `max_note_len`。
-    pub max_note_len_by_key: [u32; KEY_COUNT],
     /// Per-track note count cache (avoids scanning KEY_COUNT buckets for stats).
     pub track_note_count: Vec<u64>,
     /// Per-track audible note count (velocity > 1). `> 0` means the track
@@ -978,7 +971,6 @@ impl Default for YinModel {
             note_count: 0,
             tick_length: 0,
             max_note_len: 0,
-            max_note_len_by_key: [0; KEY_COUNT],
             track_note_count: Vec::new(),
             track_audible_count: Vec::new(),
             dirty_keys: [false; KEY_COUNT],

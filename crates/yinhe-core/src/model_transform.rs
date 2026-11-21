@@ -52,6 +52,7 @@ impl YinModel {
                     note.end_tick = note.start_tick.saturating_add(1);
                 }
             }
+            bucket.rebuild_max_ends();
         });
 
         // Conductor: tempo / time sig / key sig / markers / lyrics / chords.

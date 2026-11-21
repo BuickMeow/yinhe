@@ -147,7 +147,7 @@ fn spans(doc: &Document, key: u8) -> Vec<(u32, u32, u16)> {
 fn set_velocity(doc: &mut Document, key: u8, id: u32, velocity: u8) {
     let model = Arc::make_mut(&mut doc.data.model);
     let bucket = Arc::make_mut(&mut model.notes[key as usize]);
-    if let Some(n) = bucket.find_mut(id) {
-        n.velocity = velocity;
+    if let Some(n) = bucket.update_by_id(id, |n| n.velocity = velocity) {
+        let _ = n;
     }
 }

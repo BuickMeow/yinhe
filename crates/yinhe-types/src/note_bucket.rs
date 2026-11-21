@@ -41,6 +41,12 @@ pub struct NoteBucket {
     chunks: Vec<Arc<Vec<Note>>>,
     /// 每块首元素的 `start_tick`，块级二分定位用。
     starts: Vec<u32>,
+    /// 每块内最大的 `end_tick`。
+    ///
+    /// 范围查询用它跳过整块：若 `max_ends[i] < tick_start`，该块所有音符
+    /// 都在视口左侧结束，不可能相交。这样长音符只污染自己所在的块，
+    /// 不再需要全局/每 key 的 `max_note_len` 回看。
+    max_ends: Vec<u32>,
 }
 
 impl NoteBucket {
@@ -51,14 +57,19 @@ impl NoteBucket {
     pub fn from_sorted(notes: Vec<Note>) -> Self {
         let mut chunks = Vec::with_capacity(notes.len().div_ceil(BUCKET_CHUNK_CAP));
         let mut starts = Vec::with_capacity(chunks.capacity());
+        let mut max_ends = Vec::with_capacity(chunks.capacity());
         let iter = notes.into_iter();
         let mut current: Vec<Note> = Vec::with_capacity(BUCKET_CHUNK_CAP);
+        let mut current_max_end = 0u32;
         for n in iter {
             if current.is_empty() {
                 starts.push(n.start_tick);
             }
+            current_max_end = current_max_end.max(n.end_tick);
             current.push(n);
             if current.len() == BUCKET_CHUNK_CAP {
+                max_ends.push(current_max_end);
+                current_max_end = 0;
                 chunks.push(Arc::new(std::mem::replace(
                     &mut current,
                     Vec::with_capacity(BUCKET_CHUNK_CAP),
@@ -67,9 +78,14 @@ impl NoteBucket {
         }
         if !current.is_empty() {
             current.shrink_to_fit();
+            max_ends.push(current_max_end);
             chunks.push(Arc::new(current));
         }
-        Self { chunks, starts }
+        Self {
+            chunks,
+            starts,
+            max_ends,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -80,6 +96,7 @@ impl NoteBucket {
     pub fn clear(&mut self) {
         self.chunks.clear();
         self.starts.clear();
+        self.max_ends.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -180,6 +197,9 @@ impl NoteBucket {
 
     /// 跨块顺序可变迭代。逐块 `Arc::make_mut`：模型被共享时，每个块都会
     /// 深拷贝（1MB）。只适合"全局都要改"的操作（track remap、ppq 缩放）。
+    ///
+    /// 若修改了 `end_tick`，调用方必须随后 [`rebuild_max_ends`](Self::rebuild_max_ends)；
+    /// 只改 `track` 等不影响 end 的字段时不需要。
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Note> + '_ {
         self.chunks
             .iter_mut()
@@ -193,18 +213,64 @@ impl NoteBucket {
         NoteRangeIter::new(&self.chunks[start_idx..], &self.starts[start_idx..], lo, hi)
     }
 
+    /// 可能与 `[tick_start, tick_end]` 相交的范围迭代。
+    ///
+    /// 用每块 `max_end_tick` 找第一个可能相交的块，再从该块首音符开始扫；
+    /// 块内仍可能包含 `end_tick < tick_start` 的音符（end 不参与排序），
+    /// 调用方按既有契约自行精确过滤。整块在视口左侧结束的会被直接跳过。
+    pub fn range_including_long(&self, tick_start: u32, tick_end: u32) -> NoteRangeIter<'_> {
+        match self.first_intersecting_chunk(tick_start, tick_end) {
+            Some(idx) => self.range(self.starts[idx], tick_end),
+            None => self.range(tick_end, tick_end),
+        }
+    }
+
+    /// 与 `[tick_start, tick_end]` 可能相交的块切片（CPU cull 用）。
+    ///
+    /// 只返回块级候选，块内是否真的相交由调用方按 `end_tick` 过滤。
+    /// 不分配、不复制，直接借用内部 chunks。
+    pub fn chunks_in_range(&self, tick_start: u32, tick_end: u32) -> &[Arc<Vec<Note>>] {
+        let Some(first) = self.first_intersecting_chunk(tick_start, tick_end) else {
+            return &[];
+        };
+        let end = self.starts.partition_point(|&s| s <= tick_end);
+        if first >= end {
+            &[]
+        } else {
+            &self.chunks[first..end]
+        }
+    }
+
+    /// 第一个可能相交的块下标：块首 <= tick_end 且块内 max_end >= tick_start。
+    fn first_intersecting_chunk(&self, tick_start: u32, tick_end: u32) -> Option<usize> {
+        let end = self.starts.partition_point(|&s| s <= tick_end);
+        (0..end).find(|&i| self.max_ends[i] >= tick_start)
+    }
+
+    /// 重算每块 `max_end_tick`。`iter_mut` / 外部直接改 end 的路径必须调用。
+    pub fn rebuild_max_ends(&mut self) {
+        self.max_ends.clear();
+        self.max_ends.extend(
+            self.chunks
+                .iter()
+                .map(|c| c.iter().map(|n| n.end_tick).max().unwrap_or(0)),
+        );
+    }
+
     /// 按排序键单点插入：块级定位 + 块内插入（O(块内)），满则均分。
     /// 只深拷贝触达块。
     pub fn insert_sorted(&mut self, note: Note) {
         if self.chunks.is_empty() {
             self.chunks.push(Arc::new(vec![note]));
             self.starts.push(note.start_tick);
+            self.max_ends.push(note.end_tick);
             return;
         }
         let idx = self.chunk_index_for(note.start_tick);
         let chunk = Arc::make_mut(&mut self.chunks[idx]);
         let pos = chunk.partition_point(|n| n.start_tick < note.start_tick);
         chunk.insert(pos, note);
+        self.max_ends[idx] = self.max_ends[idx].max(note.end_tick);
         if pos == 0 {
             // 插到块头改变了块首元素，starts 必须同步（否则块级二分失序）。
             self.starts[idx] = chunk[0].start_tick;
@@ -212,7 +278,10 @@ impl NoteBucket {
         if chunk.len() > BUCKET_CHUNK_CAP {
             let split_at = chunk.len() / 2;
             let right = chunk.split_off(split_at);
+            self.max_ends[idx] = chunk.iter().map(|n| n.end_tick).max().unwrap_or(0);
+            let right_max = right.iter().map(|n| n.end_tick).max().unwrap_or(0);
             self.starts.insert(idx + 1, right[0].start_tick);
+            self.max_ends.insert(idx + 1, right_max);
             self.chunks.insert(idx + 1, Arc::new(right));
         }
     }
@@ -227,12 +296,15 @@ impl NoteBucket {
         if self.chunks.is_empty() {
             for part in new.chunks(BUCKET_CHUNK_CAP) {
                 self.starts.push(part[0].start_tick);
+                self.max_ends
+                    .push(part.iter().map(|n| n.end_tick).max().unwrap_or(0));
                 self.chunks.push(Arc::new(part.to_vec()));
             }
             return;
         }
         let mut result: Vec<Arc<Vec<Note>>> = Vec::with_capacity(self.chunks.len() + 1);
         let mut starts = Vec::with_capacity(result.capacity());
+        let mut max_ends = Vec::with_capacity(result.capacity());
         let mut cursor = 0usize;
         for chunk in &self.chunks {
             // 首元素落在本块区间（<= 本块尾）的新音符归入本块一起归并。
@@ -246,16 +318,19 @@ impl NoteBucket {
             cursor = end;
             for part in merged.chunks(BUCKET_CHUNK_CAP) {
                 starts.push(part[0].start_tick);
+                max_ends.push(part.iter().map(|n| n.end_tick).max().unwrap_or(0));
                 result.push(Arc::new(part.to_vec()));
             }
         }
         // 超出旧块范围的新音符，直接成块。
         for part in new[cursor..].chunks(BUCKET_CHUNK_CAP) {
             starts.push(part[0].start_tick);
+            max_ends.push(part.iter().map(|n| n.end_tick).max().unwrap_or(0));
             result.push(Arc::new(part.to_vec()));
         }
         self.chunks = result;
         self.starts = starts;
+        self.max_ends = max_ends;
     }
 
     /// 删除 `start_tick ∈ [lo, hi)` 的连续段（全 track 框选快路径），
@@ -285,6 +360,7 @@ impl NoteBucket {
             }
         }
         self.rebuild_starts();
+        self.rebuild_max_ends();
         out
     }
 
@@ -340,6 +416,7 @@ impl NoteBucket {
             self.chunks.remove(i);
         }
         self.rebuild_starts();
+        self.rebuild_max_ends();
         out
     }
 
@@ -357,6 +434,7 @@ impl NoteBucket {
             }
         }
         self.rebuild_starts();
+        self.rebuild_max_ends();
     }
 
     /// 可变 retain：`f` 返回 false 的音符被移除，返回 true 的可就地修改。
@@ -375,6 +453,7 @@ impl NoteBucket {
             }
         }
         self.rebuild_starts();
+        self.rebuild_max_ends();
     }
 
     /// 按全局唯一 `id` 删除单个音符，返回被删音符。
@@ -391,6 +470,7 @@ impl NoteBucket {
             self.chunks.remove(idx);
         }
         self.rebuild_starts();
+        self.rebuild_max_ends();
         Some(note)
     }
 
@@ -414,18 +494,24 @@ impl NoteBucket {
         }
         if removed > 0 {
             self.rebuild_starts();
+            self.rebuild_max_ends();
         }
         removed
     }
 
-    /// 按全局唯一 `id` 定位可变引用。只深拷贝目标块。
-    pub fn find_mut(&mut self, id: u32) -> Option<&mut Note> {
+    /// 按全局唯一 `id` 更新：只深拷贝目标块，修改后重算该块 max_end。
+    /// 返回更新后的音符副本。若 `f` 改了 `start_tick`，调用方仍需 `sort()`。
+    pub fn update_by_id(&mut self, id: u32, f: impl FnOnce(&mut Note)) -> Option<Note> {
         let idx = self
             .chunks
             .iter()
             .position(|c| c.iter().any(|n| n.id == id))?;
         let chunk = Arc::make_mut(&mut self.chunks[idx]);
-        chunk.iter_mut().find(|n| n.id == id)
+        let note = chunk.iter_mut().find(|n| n.id == id)?;
+        f(note);
+        let updated = *note;
+        self.max_ends[idx] = chunk.iter().map(|n| n.end_tick).max().unwrap_or(0);
+        Some(updated)
     }
 
     /// 对匹配 `pred` 的音符原地应用 `f`，**只深拷贝含匹配音符的块**。
@@ -440,7 +526,8 @@ impl NoteBucket {
         mut f: impl FnMut(&mut Note),
     ) -> bool {
         let mut touched = false;
-        for chunk in &mut self.chunks {
+        let mut touched_chunks = Vec::new();
+        for (idx, chunk) in self.chunks.iter_mut().enumerate() {
             if !chunk.iter().any(&mut pred) {
                 continue;
             }
@@ -450,6 +537,14 @@ impl NoteBucket {
                     touched = true;
                 }
             }
+            touched_chunks.push(idx);
+        }
+        for idx in touched_chunks {
+            self.max_ends[idx] = self.chunks[idx]
+                .iter()
+                .map(|n| n.end_tick)
+                .max()
+                .unwrap_or(0);
         }
         touched
     }
@@ -632,6 +727,44 @@ mod tests {
         assert!(b.iter().all(|n| n.id != 1));
         assert_sorted(&b);
         assert_eq!(b.first().unwrap().start_tick, 0);
+    }
+
+    #[test]
+    fn max_ends_track_insert_update_and_removal() {
+        let mut b = NoteBucket::from_sorted(vec![note(1, 0)]);
+        assert_eq!(b.max_ends, vec![10]);
+
+        b.insert_sorted(Note {
+            id: 2,
+            start_tick: 5,
+            end_tick: 1_000,
+            velocity: 100,
+            track: 0,
+        });
+        assert_eq!(b.max_ends, vec![1_000]);
+
+        b.update_by_id(1, |n| n.end_tick = 50);
+        assert_eq!(b.max_ends, vec![1_000]);
+
+        b.remove_by_id(2);
+        assert_eq!(b.max_ends, vec![50]);
+    }
+
+    /// 块级 max_end：前面整块都在视口左侧结束时直接跳过，长音符只影响自己的块。
+    #[test]
+    fn range_including_long_skips_chunks_ending_before_viewport() {
+        let mut notes: Vec<Note> = (0..BUCKET_CHUNK_CAP as u32).map(|i| note(i, i)).collect();
+        // 第二个块从 1_000_000 开始。
+        notes.extend((0..10u32).map(|i| note(1_000_000 + i, 1_000_000 + i)));
+        let b = NoteBucket::from_sorted(notes);
+
+        let first = b
+            .range_including_long(1_000_000, 1_000_100)
+            .next()
+            .expect("应命中第二块");
+        assert_eq!(first.start_tick, 1_000_000, "第一块应被整块跳过");
+        assert_eq!(b.chunks_in_range(1_000_000, 1_000_100).len(), 1);
+        assert!(b.chunks_in_range(900_000, 900_100).is_empty());
     }
 
     #[test]

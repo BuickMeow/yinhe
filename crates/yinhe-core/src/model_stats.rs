@@ -61,10 +61,6 @@ impl YinModel {
     pub fn mark_dirty(&mut self, key: u8) {
         self.dirty_keys[key as usize] = true;
         self.note_revisions[key as usize] = self.note_revisions[key as usize].wrapping_add(1);
-        // 脏桶在 rebuild_dirty 之前也可能被查询（例如并发的只读快照），
-        // 此时把该 key 的回看宽度设为未知（全范围），保证不漏音符；
-        // rebuild_dirty 会重新扫描该桶并写回精确值。
-        self.max_note_len_by_key[key as usize] = u32::MAX;
     }
 
     /// Rebuild all derived data from scratch.
@@ -110,7 +106,6 @@ impl YinModel {
         let mut bucket_stats: [HashMap<u16, (u64, u64)>; KEY_COUNT] =
             core::array::from_fn(|_| HashMap::new());
         let mut bucket_max_end: [u64; KEY_COUNT] = [0; KEY_COUNT];
-        let mut key_max_len: [u32; KEY_COUNT] = [0; KEY_COUNT];
         for (k, bucket) in self.notes.iter().enumerate() {
             note_count += bucket.len() as u64;
             for n in bucket.iter() {
@@ -118,9 +113,7 @@ impl YinModel {
                 if end > max_tick {
                     max_tick = end;
                 }
-                let len = n.end_tick.saturating_sub(n.start_tick);
-                max_len = max_len.max(len);
-                key_max_len[k] = key_max_len[k].max(len);
+                max_len = max_len.max(n.end_tick.saturating_sub(n.start_tick));
                 if end > bucket_max_end[k] {
                     bucket_max_end[k] = end;
                 }
@@ -140,7 +133,6 @@ impl YinModel {
         self.note_count = note_count;
         self.tick_length = max_tick;
         self.max_note_len = max_len;
-        self.max_note_len_by_key = key_max_len;
         self.track_note_count = track_counts;
         self.track_audible_count = track_audible;
         for k in 0..KEY_COUNT {
@@ -249,7 +241,6 @@ impl YinModel {
 
             // Recompute this dirty bucket's max end_tick.
             let mut bucket_max: u64 = 0;
-            let mut key_max_len: u32 = 0;
             for n in self.notes[k].iter() {
                 let end = n.end_tick as u64;
                 if end > bucket_max {
@@ -257,11 +248,10 @@ impl YinModel {
                 }
                 // max_note_len 只增不减：删除最长音符后保留旧值只会让视口
                 // 查询左边界略偏左，绝不漏音符（见 NoteSource::max_note_len）。
-                let len = n.end_tick.saturating_sub(n.start_tick);
-                key_max_len = key_max_len.max(len);
-                self.max_note_len = self.max_note_len.max(len);
+                self.max_note_len = self
+                    .max_note_len
+                    .max(n.end_tick.saturating_sub(n.start_tick));
             }
-            self.max_note_len_by_key[k] = key_max_len;
             self.bucket_max_end_tick[k] = bucket_max;
         }
         self.note_count = (self.note_count as i64 + delta_note_count) as u64;
@@ -405,6 +395,7 @@ impl YinModel {
                 }
             }
             bucket.sort();
+            bucket.rebuild_max_ends();
             let d = done.fetch_add(1, Ordering::Relaxed) + 1;
             if let Ok(mut p) = progress_clone.lock() {
                 p.progress = d as f32 / KEY_COUNT as f32 * 0.9;
@@ -629,11 +620,6 @@ impl NoteLoader {
             // 同 start_tick 的音符顺序不影响音乐/渲染；不稳定排序避免为
             // 数千万音符再申请一份 O(N) 的稳定排序临时缓冲。
             v.sort_unstable_by_key(|n| n.start_tick);
-            model.max_note_len_by_key[key] = v
-                .iter()
-                .map(|n| n.end_tick.saturating_sub(n.start_tick))
-                .max()
-                .unwrap_or(0);
             model.notes[key] = Arc::new(NoteBucket::from_sorted(v));
         }
         model.note_count = self.note_count;
