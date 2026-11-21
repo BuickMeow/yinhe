@@ -115,6 +115,7 @@ class _AutomationPanelState extends State<AutomationPanel>
 
   int? _selectedLane; // null = Velocity
   (int, int)? _pendingTarget; // ensureAutomationLane 后等待 lanes 刷新
+  bool _amStateFlushScheduled = false;
   final ValueNotifier<List<(double, double, double, int)>> _velocityPreview =
       ValueNotifier(const []);
   bool _velocityStrokeActive = false;
@@ -274,13 +275,25 @@ class _AutomationPanelState extends State<AutomationPanel>
   }
 
   /// 绘制区布局：同步逻辑尺寸给 Rust；物理尺寸由外层 LayoutBuilder 上报。
+  ///
+  /// layout 阶段不直接跨 FFI：一帧内可能多次 layout（旋转、键盘、AM 高度拖动），
+  /// 登记到帧末再发送，和主画布尺寸上报保持一致。
   void _onPlotLayout(Size size) {
     if (size.width < 1 || size.height < 1) {
       return;
     }
     _amW = size.width;
     _amH = size.height;
-    _sendAmState();
+    if (_amStateFlushScheduled) {
+      return;
+    }
+    _amStateFlushScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _amStateFlushScheduled = false;
+      if (mounted) {
+        _sendAmState();
+      }
+    });
   }
 
   /// 当前选中的 lane 下标（null = 力度）。
