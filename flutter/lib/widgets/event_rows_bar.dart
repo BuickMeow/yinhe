@@ -408,6 +408,20 @@ class _EventRowsPainter extends CustomPainter {
     canvas.drawRect(Rect.fromLTWH(x1 - 1, band.top, 2, band.height), handle);
   }
 
+  int _lowerBound(List<RulerMarker> events, double tick) {
+    var lo = 0;
+    var hi = events.length;
+    while (lo < hi) {
+      final mid = (lo + hi) >> 1;
+      if (events[mid].tick < tick) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    return lo;
+  }
+
   void _paintEvents(
     Canvas canvas,
     Rect clip,
@@ -418,13 +432,18 @@ class _EventRowsPainter extends CustomPainter {
     Color color,
   ) {
     var lastTextX = -1e9;
-    for (final e in events) {
+    // 事件列表按 tick 升序：二分定位可视区起点，避免从第 0 个事件开始扫。
+    final startTick = ppu > 0
+        ? ((clip.left - origin + scrollX) / ppu).clamp(0.0, double.infinity)
+        : 0.0;
+    for (var i = _lowerBound(events, startTick); i < events.length; i++) {
+      final e = events[i];
       final x = e.tick * ppu - scrollX + origin;
-      if (x < clip.left) {
-        continue;
-      }
       if (x > clip.right) {
         break;
+      }
+      if (x < clip.left) {
+        continue;
       }
       canvas.drawLine(
         Offset(x, clip.top + 2),
