@@ -813,7 +813,15 @@ fn bench_proto_after(count: usize, iters: usize, remove_iters: usize) {
 }
 
 fn main() {
-    let quick = std::env::args().any(|a| a == "--quick");
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--delta-huge") {
+        println!("note_hotpath_bench: build mode = release, delta huge = true");
+        bench_delta(100_000_000);
+        println!();
+        println!("done");
+        return;
+    }
+    let quick = args.iter().any(|a| a == "--quick");
     println!("note_hotpath_bench: build mode = release, quick = {quick}");
 
     bench_model(1_000_000, 100, 100, 3);
