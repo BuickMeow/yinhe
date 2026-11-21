@@ -7,6 +7,20 @@ mixin _ShellCore on _ShellBase {
     if (rust.viewSnapshot(_snapPtr) == 0) {
       return _snap.value;
     }
+    // 先与当前快照逐项比较，相同就复用旧 List，避免每帧生成一个 15 项数组。
+    final cur = _snap.value;
+    if (cur.length == SnapField.length) {
+      var same = true;
+      for (var i = 0; i < SnapField.length; i++) {
+        if (cur[i] != _snapPtr[i]) {
+          same = false;
+          break;
+        }
+      }
+      if (same) {
+        return cur;
+      }
+    }
     return List<double>.generate(SnapField.length, (i) => _snapPtr[i]);
   }
 
