@@ -91,20 +91,23 @@ pub(crate) fn upload_note_layers(
     ghost_notes: &mut [GhostNote],
     w: f32,
     h: f32,
-    vh: u64,
-    wh: u64,
     tv_hash: u64,
-    offsets_hash: u64,
     revision: u64,
     track_range: (usize, usize),
 ) {
     let _ = h;
     let _ = row_layout;
+    // 音符实例是 tick 空间数据：缓存键只含可见 tick 区间、ppu、轨道范围、
+    // 显隐与内容 revision。scroll_y 只改变 track_range；单纯滚动不应因
+    // render_hash 里的 scroll_x/scroll_y 让整层音符失效。
+    let (tick_lo, tick_hi) = view.visible_tick_range(w);
     let notes_key = layer_cache_key(&[
-        vh,
-        wh,
+        tick_lo.to_bits(),
+        tick_hi.to_bits(),
+        u64::from(view.base.pixels_per_tick.to_bits()),
+        track_range.0 as u64,
+        track_range.1 as u64,
         tv_hash,
-        offsets_hash,
         revision,
         hidden_notes.len() as u64,
     ]);

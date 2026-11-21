@@ -238,10 +238,7 @@ pub fn show(
         &mut ghost_notes,
         w as f32,
         h as f32,
-        vh,
-        wh,
         tv_hash,
-        offsets_hash,
         cfg.revision,
         track_range,
     );
