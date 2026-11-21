@@ -69,12 +69,34 @@ impl Document {
         if tracks.is_empty() {
             return;
         }
+        // 连续轨道合并成一个矩形。全选通常等价于 1 个 rect，
+        // 避免 materialize_pending 对每条轨各扫一遍全部 key 桶（O(轨道数×N)）。
+        tracks.sort_unstable();
+        tracks.dedup();
 
         self.edit.selected.clear();
+        let mut run_start: Option<u16> = None;
+        let mut run_end = 0u16;
         for &track_idx in &tracks {
+            match run_start {
+                Some(_) if track_idx == run_end.saturating_add(1) => run_end = track_idx,
+                Some(start) => {
+                    self.edit
+                        .selected
+                        .add_rect_track(0, max_end + 1, 0, MAX_KEY, start, run_end);
+                    run_start = Some(track_idx);
+                    run_end = track_idx;
+                }
+                None => {
+                    run_start = Some(track_idx);
+                    run_end = track_idx;
+                }
+            }
+        }
+        if let Some(start) = run_start {
             self.edit
                 .selected
-                .add_rect_track(0, max_end + 1, 0, MAX_KEY, track_idx, track_idx);
+                .add_rect_track(0, max_end + 1, 0, MAX_KEY, start, run_end);
         }
 
         // Update visual sel_rect to show full range (PR uses f64 ticks).
@@ -431,6 +453,31 @@ mod tests {
             doc.edit.selected.rects.iter().any(|r| r.4 == 0),
             "未锁定轨应被选中"
         );
+    }
+
+    #[test]
+    fn select_all_pr_merges_contiguous_tracks() {
+        let mut doc = make_doc();
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            model.tracks.push(Arc::new(TrackData::new(1, 1)));
+            model.tracks.push(Arc::new(TrackData::new(2, 2)));
+            model.rebuild();
+        }
+        doc.edit.track_visible = vec![true, true, true];
+        doc.edit.track_pianoroll_visible = vec![true, true, true];
+        doc.edit.track_locked = vec![false, false, false];
+        add(&mut doc, 0, 100, 60);
+
+        doc.select_all_pr();
+
+        assert_eq!(
+            doc.edit.selected.rects.len(),
+            1,
+            "连续轨道应合并成一个矩形，避免物化时按轨重复扫描 key 桶"
+        );
+        let (_, _, _, _, tr_lo, tr_hi) = doc.edit.selected.rects[0];
+        assert_eq!((tr_lo, tr_hi), (0, 2));
     }
 
     #[test]
