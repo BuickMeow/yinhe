@@ -19,6 +19,7 @@ use wgpu::rwh::{AndroidDisplayHandle, AndroidNdkWindowHandle, RawWindowHandle};
 use wgpu::rwh::{OhosDisplayHandle, OhosNdkWindowHandle, RawWindowHandle};
 
 use yinhe_core::{Selection, TrackKind, YinModel};
+use yinhe_mobile_core::effective_visible;
 use yinhe_types::{
     ArrangementView, AutomationLane, AutomationPanelView, AutomationTarget, NoteSource,
     PianoRollView, TimelineViewBase,
@@ -591,15 +592,5 @@ pub fn render_frame(gpu: &Gpu, t: &mut Target) {
         log::info!("画布 FPS: {}（{}x{}）", t.frames, fw, fh);
         t.frames = 0;
         t.fps_start = Instant::now();
-    }
-}
-
-/// “显示轨道”过滤后的可见掩码（None = 原样）。
-pub(crate) fn effective_visible(track_visible: &[bool], display_track: Option<usize>) -> Vec<bool> {
-    match display_track {
-        None => track_visible.to_vec(),
-        Some(t) => (0..track_visible.len())
-            .map(|i| i == t && track_visible[i])
-            .collect(),
     }
 }

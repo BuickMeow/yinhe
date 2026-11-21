@@ -51,7 +51,9 @@ pub struct SnapCtx {
     ppq: u32,
     num: u8,
     den_pow: u8,
-    events: Vec<yinhe_types::TimeSigEvent>,
+    /// 共享 TempoMap（Arc clone，O(1)）；拍号事件多时不再每个手势帧
+    /// 复制整份 Vec。
+    tempo: Option<Arc<yinhe_core::TempoMap>>,
 }
 
 impl SnapCtx {
@@ -61,19 +63,24 @@ impl SnapCtx {
                 ppq: s.ppq.max(1),
                 num: m.tempo_map.time_sig_default.0,
                 den_pow: m.tempo_map.time_sig_default.1,
-                events: m.tempo_map.time_sig_events.clone(),
+                tempo: Some(Arc::clone(&m.tempo_map)),
             },
             None => Self {
                 ppq: s.ppq.max(1),
                 num: 4,
                 den_pow: 2,
-                events: Vec::new(),
+                tempo: None,
             },
         }
     }
 
     fn args(&self) -> (u32, u8, u8, &[yinhe_types::TimeSigEvent]) {
-        (self.ppq, self.num, self.den_pow, &self.events)
+        let events = self
+            .tempo
+            .as_ref()
+            .map(|t| t.time_sig_events.as_slice())
+            .unwrap_or(&[]);
+        (self.ppq, self.num, self.den_pow, events)
     }
 
     /// 就近吸附（round）。
@@ -148,6 +155,36 @@ pub struct AutoGhostLane {
     pub src_ticks: Vec<u32>,
 }
 
+/// 拖拽时原位置的隐藏来源：
+/// - 单音符/刷子：`HiddenNotes`（按 id 位图）；
+/// - 选区拖动：直接用 `Selection` 判定，避免物化 1 bit/音符。
+#[derive(Clone, Default)]
+pub enum DragHidden {
+    #[default]
+    None,
+    Notes(Arc<HiddenNotes>),
+    Selection(Arc<Selection>),
+}
+
+/// `DragHidden::None` 的零成本过滤器。
+struct EmptyHidden;
+
+impl HiddenFilter for EmptyHidden {
+    fn is_hidden(&self, _note: &yinhe_types::Note, _key: u8) -> bool {
+        false
+    }
+
+    fn hidden_count(&self) -> u64 {
+        0
+    }
+
+    fn hidden_hash(&self) -> u64 {
+        0
+    }
+}
+
+static EMPTY_HIDDEN: EmptyHidden = EmptyHidden;
+
 /// 渲染线程与 Flutter 视口手势共享的场景数据。
 /// PR/AR 拖拽预览：ghost 音符 + 原位置隐藏集合 + AR 自动化竖线 ghost。
 ///
@@ -155,9 +192,8 @@ pub struct AutoGhostLane {
 #[derive(Clone, Default)]
 pub struct DragPreview {
     pub ghost: Arc<Vec<(u32, u32, u8, u16)>>,
-    pub hidden: Arc<HiddenNotes>,
-    /// 选区拖动时的隐藏集合：直接用 Selection 判定，避免物化 1 bit/音符。
-    pub hidden_selection: Option<Arc<Selection>>,
+    /// 二选一的隐藏来源，避免 `hidden` + `hidden_selection` 两套状态。
+    pub hidden: DragHidden,
     /// AR 自动化竖线 ghost（跟随选框移动）。
     pub auto_ghost: Arc<Vec<AutoGhostLane>>,
     /// hidden 集合的稳定 hash；只在 hidden 真正变化时重算。
@@ -184,18 +220,19 @@ impl DragPreview {
     }
 
     pub fn set_hidden_arc(&mut self, hidden: Arc<HiddenNotes>) {
-        if self.hidden_selection.is_none() && Arc::ptr_eq(&self.hidden, &hidden) {
-            return;
-        }
-        let hash = hidden.hidden_hash();
-        if self.hidden_selection.is_none()
-            && hash == self.hidden_hash
-            && hidden.hidden_count() == self.hidden.hidden_count()
+        if let DragHidden::Notes(cur) = &self.hidden
+            && Arc::ptr_eq(cur, &hidden)
         {
             return;
         }
-        self.hidden = hidden;
-        self.hidden_selection = None;
+        let hash = hidden.hidden_hash();
+        if let DragHidden::Notes(cur) = &self.hidden
+            && hash == self.hidden_hash
+            && hidden.hidden_count() == cur.hidden_count()
+        {
+            return;
+        }
+        self.hidden = DragHidden::Notes(hidden);
         self.hidden_hash = hash;
         self.revision = self.revision.wrapping_add(1);
     }
@@ -203,46 +240,41 @@ impl DragPreview {
     /// 选区拖动：用 Selection 直接作为隐藏过滤器，不物化 HiddenNotes。
     pub fn set_hidden_selection(&mut self, selection: Arc<Selection>) {
         let hash = selection.state_hash();
-        if self
-            .hidden_selection
-            .as_ref()
-            .is_some_and(|cur| cur.state_hash() == hash)
+        if let DragHidden::Selection(cur) = &self.hidden
+            && cur.state_hash() == hash
         {
             return;
         }
-        self.hidden = Arc::new(HiddenNotes::default());
-        self.hidden_selection = Some(selection);
+        self.hidden = DragHidden::Selection(selection);
         self.hidden_hash = hash;
         self.revision = self.revision.wrapping_add(1);
     }
 
     /// 当前生效的隐藏过滤器（单音符拖动 / 选区拖动二选一）。
     pub fn hidden_filter(&self) -> &dyn HiddenFilter {
-        match &self.hidden_selection {
-            Some(selection) => selection.as_ref(),
-            None => self.hidden.as_ref(),
+        match &self.hidden {
+            DragHidden::Notes(notes) => notes.as_ref(),
+            DragHidden::Selection(selection) => selection.as_ref(),
+            DragHidden::None => &EMPTY_HIDDEN,
         }
     }
 
     pub fn clear_hidden(&mut self) {
-        if self.hidden.is_empty() && self.hidden_selection.is_none() && self.hidden_hash == 0 {
+        if matches!(self.hidden, DragHidden::None) && self.hidden_hash == 0 {
             return;
         }
-        self.hidden = Arc::new(HiddenNotes::default());
-        self.hidden_selection = None;
+        self.hidden = DragHidden::None;
         self.hidden_hash = 0;
         self.revision = self.revision.wrapping_add(1);
     }
 
     pub fn clear(&mut self) {
         let had = !self.ghost.is_empty()
-            || !self.hidden.is_empty()
-            || self.hidden_selection.is_some()
+            || !matches!(self.hidden, DragHidden::None)
             || !self.auto_ghost.is_empty()
             || self.selected;
         self.ghost = Arc::new(Vec::new());
-        self.hidden = Arc::new(HiddenNotes::default());
-        self.hidden_selection = None;
+        self.hidden = DragHidden::None;
         self.hidden_hash = 0;
         self.auto_ghost = Arc::new(Vec::new());
         self.selected = false;

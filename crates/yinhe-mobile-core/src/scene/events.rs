@@ -685,11 +685,10 @@ pub fn event_delete(json: &str) -> i32 {
         }
         "tempo" => doc.delete_automation_event(0, 0, &AutomationTarget::Tempo, tick),
         "marker" => {
+            // marker 不参与音频，只刷新场景；不能顺手 reload_notes
+            // （会重建 CC/audible notes，黑乐谱下是整曲级开销）。
             let ok = doc.delete_marker_with_undo(tick, "删除标签");
-            let model = doc.data.model.clone();
             refresh_snapshot(&mut s);
-            drop(s);
-            crate::audio::reload_notes(model);
             return i32::from(ok);
         }
         _ => None,
@@ -893,10 +892,8 @@ pub fn event_paste(source: &str, target: &str) -> i32 {
                 .and_then(|x| x.as_str())
                 .unwrap_or("");
             if doc.insert_marker_with_undo(target_tick, text.to_string(), "粘贴标签") {
-                let model = doc.data.model.clone();
+                // marker 不参与音频，只刷新场景。
                 refresh_snapshot(&mut s);
-                drop(s);
-                crate::audio::reload_notes(model);
                 return 1;
             }
             None
