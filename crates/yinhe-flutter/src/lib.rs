@@ -25,7 +25,7 @@ mod render;
 // 平台无关的移动编辑核心；在 crate 根重导出，保持既有 `crate::scene` 等调用不变。
 pub(crate) use yinhe_mobile_core::{
     audio, autosave, doc_job, edit, inertia, library, midi_export, midi_import, midi_names, scene,
-    soundfont_archive, theme_colors, velocity_cache,
+    soundfont_archive, task_center, theme_colors, velocity_cache,
 };
 
 use std::sync::atomic::{AtomicU32, Ordering};

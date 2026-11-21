@@ -22,6 +22,7 @@ pub mod midi_names;
 pub mod scene;
 pub mod selection_materializer;
 pub mod soundfont_archive;
+pub mod task_center;
 pub mod theme_colors;
 pub mod velocity_cache;
 pub mod viewport;

@@ -868,75 +868,86 @@ mixin _ShellBuild on _ShellBase {
                         onPickSoundFont: _pickSoundFont,
                         onBack: () => setState(() => _showSettings = false),
                       ),
-                    // 音色库热切换：底部小进度条，IgnorePointer 不拦任何手势。
+                    // 统一长任务进度：底部一条，IgnorePointer 不拦手势。
                     Positioned(
                       left: 0,
                       right: 0,
                       bottom: 18,
                       child: IgnorePointer(
                         child: Center(
-                          child: ValueListenableBuilder<(bool, int, int, double)>(
-                            valueListenable: _sfProgress,
-                            builder: (context, p, _) {
-                              final (loading, done, total, progress) = p;
-                              return AnimatedOpacity(
-                                opacity: loading ? 1 : 0,
-                                duration: const Duration(milliseconds: 150),
-                                child: Container(
-                                  width: 190,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: YinheTheme.bg.withValues(
-                                      alpha: 0.94,
+                          child:
+                              ValueListenableBuilder<
+                                ({
+                                  String title,
+                                  String detail,
+                                  double? progress,
+                                })?
+                              >(
+                                valueListenable: _activeTask,
+                                builder: (context, task, _) {
+                                  final progress = task?.progress;
+                                  final text = task == null
+                                      ? ''
+                                      : task.detail.isEmpty
+                                      ? task.title
+                                      : '${task.title} · ${task.detail}';
+                                  return AnimatedOpacity(
+                                    opacity: task == null ? 0 : 1,
+                                    duration: const Duration(milliseconds: 150),
+                                    child: Container(
+                                      width: 230,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 6,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: YinheTheme.bg.withValues(
+                                          alpha: 0.94,
+                                        ),
+                                        borderRadius: BorderRadius.circular(8),
+                                        boxShadow: [
+                                          BoxShadow(
+                                            color: Colors.black.withValues(
+                                              alpha: 0.18,
+                                            ),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 2),
+                                          ),
+                                        ],
+                                      ),
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            progress == null
+                                                ? text
+                                                : '$text ${(progress * 100).round()}%',
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              color: YinheTheme.text,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          ClipRRect(
+                                            borderRadius: BorderRadius.circular(
+                                              2,
+                                            ),
+                                            child: LinearProgressIndicator(
+                                              value: progress?.clamp(0.0, 1.0),
+                                              minHeight: 3,
+                                              backgroundColor:
+                                                  YinheTheme.lineFg,
+                                              color: YinheTheme.accent,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                    borderRadius: BorderRadius.circular(8),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.black.withValues(
-                                          alpha: 0.18,
-                                        ),
-                                        blurRadius: 8,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        total > 0
-                                            ? (L10n.isZh
-                                                  ? '加载音色库 ${(progress * 100).round()}%'
-                                                  : 'Loading soundfont ${(progress * 100).round()}%')
-                                            : (L10n.isZh
-                                                  ? '加载音色库…'
-                                                  : 'Loading soundfont…'),
-                                        style: TextStyle(
-                                          color: YinheTheme.text,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      ClipRRect(
-                                        borderRadius: BorderRadius.circular(2),
-                                        child: LinearProgressIndicator(
-                                          value: total > 0
-                                              ? progress.clamp(0.0, 1.0)
-                                              : null,
-                                          minHeight: 3,
-                                          backgroundColor: YinheTheme.lineFg,
-                                          color: YinheTheme.accent,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
+                                  );
+                                },
+                              ),
                         ),
                       ),
                     ),

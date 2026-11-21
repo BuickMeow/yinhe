@@ -176,6 +176,12 @@ pub extern "C" fn yinhe_library_json() -> *mut std::ffi::c_char {
     to_c_string(library::library_json())
 }
 
+/// 统一任务列表 JSON：`{"tasks":[{id,title,detail,progress,state,error}]}`。
+#[unsafe(no_mangle)]
+pub extern "C" fn yinhe_tasks_json() -> *mut std::ffi::c_char {
+    to_c_string(task_center::tasks_json())
+}
+
 /// 文档后台任务状态 JSON：`{"state","progress","status","error"}`。
 ///
 /// `state`: 0=无任务 1=运行中 2=完成 3=失败。

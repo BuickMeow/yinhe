@@ -296,9 +296,10 @@ abstract class _ShellBase extends State<StudioShell>
   /// 时间网格线（Rust 算，Dart 只画）。
   final ValueNotifier<List<GridLine>> _gridLines = ValueNotifier(const []);
 
-  /// 音色库热切换进度：`(loading, done, total)`。
-  final ValueNotifier<(bool, int, int, double)> _sfProgress =
-      ValueNotifier<(bool, int, int, double)>((false, 0, 0, 0.0));
+  /// 底部统一任务条：当前正在跑的长任务（导入/导出/保存/音色库/文档任务）。
+  final ValueNotifier<({String title, String detail, double? progress})?>
+  _activeTask =
+      ValueNotifier<({String title, String detail, double? progress})?>(null);
   List<double>? _lastRulerKey;
   final ValueNotifier<List<TrackRow>> _tracks = ValueNotifier<List<TrackRow>>(
     const [],
@@ -396,22 +397,34 @@ abstract class _ShellBase extends State<StudioShell>
   Timer? _statusTimer;
   Timer? _audioRecoverTimer;
 
-  /// 音色库热切换进度（低频轮询，切换期间驱动底部小进度条）。
-  void _readSfProgress() {
-    final ptr = rust.sfLoadingJson();
+  /// 统一任务列表（低频轮询，驱动底部小进度条）。
+  ///
+  /// 只显示第一条运行中的任务；文件/音色库/文档任务不会再各自叠一条。
+  void _readTasks() {
+    final ptr = rust.tasksJson();
     if (ptr == ffi.nullptr) {
       return;
     }
     try {
       final m = jsonDecode(ptr.toDartString()) as Map<String, dynamic>;
-      final next = (
-        m['loading'] as bool? ?? false,
-        (m['done'] as num?)?.toInt() ?? 0,
-        (m['total'] as num?)?.toInt() ?? 0,
-        (m['progress'] as num?)?.toDouble() ?? 0.0,
-      );
-      if (_sfProgress.value != next) {
-        _sfProgress.value = next;
+      final list = (m['tasks'] as List?) ?? const [];
+      Map<String, dynamic>? running;
+      for (final raw in list) {
+        if (raw is Map<String, dynamic> &&
+            (raw['state'] as num?)?.toInt() == 1) {
+          running = raw;
+          break;
+        }
+      }
+      final next = running == null
+          ? null
+          : (
+              title: running['title'] as String? ?? '',
+              detail: running['detail'] as String? ?? '',
+              progress: (running['progress'] as num?)?.toDouble(),
+            );
+      if (_activeTask.value != next) {
+        _activeTask.value = next;
       }
     } catch (_) {
       // 解析失败保持旧值。
@@ -787,7 +800,7 @@ class _StudioShellState extends _ShellBase
       }
       _readDocState();
       _pollArchive();
-      _readSfProgress();
+      _readTasks();
       rust.autosaveTick();
       final generation = rust.documentGeneration();
       if (generation != _docGeneration) {
@@ -875,7 +888,7 @@ class _StudioShellState extends _ShellBase
     _sfRevision.dispose();
     _rulerLabels.dispose();
     _gridLines.dispose();
-    _sfProgress.dispose();
+    _activeTask.dispose();
     _saveDoneTimer?.cancel();
     _savingTimer?.cancel();
     _miniScrollTimer?.cancel();

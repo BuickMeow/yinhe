@@ -308,6 +308,11 @@ final CStrDart docJobStatusJson = bridge.lookupFunction<CStrNative, CStrDart>(
   'yinhe_doc_job_status_json',
 );
 
+/// 统一任务列表 JSON（导入/导出/保存/音色库/文档任务等）。
+final CStrDart tasksJson = bridge.lookupFunction<CStrNative, CStrDart>(
+  'yinhe_tasks_json',
+);
+
 /// 取消当前文档后台任务（目前只有 PPQ 缩放在安全点响应）。
 final IntNoArgDart docJobCancel = bridge
     .lookupFunction<IntNoArgNative, IntNoArgDart>('yinhe_doc_job_cancel');
