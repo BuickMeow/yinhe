@@ -202,6 +202,121 @@ fn bench_remove(
     print_op(label, t0.elapsed().as_secs_f64() / iters as f64);
 }
 
+fn bench_update_end_at(bm: &mut BenchModel, iters: usize, label: &str) {
+    let mut rng = 0xAAAA_1111;
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        let i = bm.index(&mut rng);
+        let start = bm.starts[i];
+        let gate = 10 + (next_rng(&mut rng) % 100) as u32;
+        let id = bm.id(i);
+        let updated = bm
+            .model
+            .update_note_at(KEY, start, TRACK, id, |n| n.end_tick = start + gate);
+        black_box(updated);
+    }
+    print_op(label, t0.elapsed().as_secs_f64() / iters as f64);
+}
+
+fn bench_update_velocity_at(bm: &mut BenchModel, iters: usize, label: &str) {
+    let mut rng = 0xBBBB_2222;
+    let t0 = Instant::now();
+    for k in 0..iters {
+        let i = bm.index(&mut rng);
+        let start = bm.starts[i];
+        let id = bm.id(i);
+        let vel = 1 + (k % 126) as u8;
+        let updated = bm
+            .model
+            .update_note_at(KEY, start, TRACK, id, |n| n.velocity = vel);
+        black_box(updated);
+    }
+    print_op(label, t0.elapsed().as_secs_f64() / iters as f64);
+}
+
+fn bench_move_at(bm: &mut BenchModel, iters: usize, label: &str) {
+    let mut rng = 0xCCCC_3333;
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        let i = bm.index(&mut rng);
+        let start = bm.starts[i];
+        let id = bm.id(i);
+        let new_start = (next_rng(&mut rng) % u64::from(MAX_TICK)) as u32;
+        let moved = bm.model.move_note_at(KEY, start, TRACK, id, KEY, new_start);
+        if moved.is_some() {
+            bm.starts[i] = new_start;
+        }
+        black_box(moved);
+    }
+    print_op(label, t0.elapsed().as_secs_f64() / iters as f64);
+}
+
+fn bench_resize_left_at(bm: &mut BenchModel, iters: usize) {
+    let mut rng = 0xDDDD_4444;
+    for k in 0..iters {
+        let i = bm.index(&mut rng);
+        let old = bm.starts[i];
+        let mut new_start = (next_rng(&mut rng) % u64::from(MAX_TICK)) as u32;
+        if new_start == old {
+            new_start = new_start.saturating_add(1);
+        }
+        let id = bm.id(i);
+        let t0 = Instant::now();
+        let updated = bm
+            .model
+            .update_note_at(KEY, old, TRACK, id, |n| n.start_tick = new_start);
+        let elapsed = t0.elapsed();
+        if updated.is_some() {
+            bm.starts[i] = new_start;
+        }
+        black_box(updated);
+        println!(
+            "  {:<36} {:>14.1} µs/op (第 {} 次)",
+            "左拉伸（*_at 真实）",
+            elapsed.as_secs_f64() * 1e6,
+            k + 1
+        );
+    }
+}
+
+fn bench_remove_at(
+    bm: &mut BenchModel,
+    iters: usize,
+    used: &mut std::collections::HashSet<usize>,
+    label: &str,
+) {
+    let count = bm.starts.len();
+    let mut rng = 0xEEEE_5555;
+    let mut removed = 0usize;
+    let t0 = Instant::now();
+    while removed < iters {
+        let i = (next_rng(&mut rng) as usize) % count;
+        if !used.insert(i) {
+            continue;
+        }
+        let start = bm.starts[i];
+        let id = bm.id(i);
+        let r = bm.model.remove_note_at(KEY, start, TRACK, id);
+        assert!(r.is_some(), "id {id} 应该存在");
+        removed += 1;
+        black_box(r);
+    }
+    print_op(label, t0.elapsed().as_secs_f64() / iters as f64);
+}
+
+fn bench_model_at(count: usize, iters: usize, remove_iters: usize, resize_iters: usize) {
+    print_header(&format!(
+        "真实 *_at 路径：{count} 音符/key（locate + 单点搬移 + 增量统计）"
+    ));
+    let mut bm = BenchModel::build(count);
+    bench_update_end_at(&mut bm, iters, "改 end（*_at 真实）");
+    bench_update_velocity_at(&mut bm, iters, "改 velocity（*_at 真实）");
+    bench_move_at(&mut bm, iters, "移动（*_at 真实）");
+    bench_resize_left_at(&mut bm, resize_iters);
+    let mut used = std::collections::HashSet::with_capacity(remove_iters);
+    bench_remove_at(&mut bm, remove_iters, &mut used, "删除（*_at 真实）");
+}
+
 fn bench_insert_batch(bm: &mut BenchModel, count: usize) {
     let base = bm.starts.len();
     let mut rng = 0x0BAD_F00D;
@@ -825,11 +940,13 @@ fn main() {
     println!("note_hotpath_bench: build mode = release, quick = {quick}");
 
     bench_model(1_000_000, 100, 100, 3);
+    bench_model_at(1_000_000, 100, 100, 3);
     bench_proto_after(1_000_000, 100, 100);
     bench_delta(1_000_000);
 
     if !quick {
         bench_model(10_000_000, 10, 10, 1);
+        bench_model_at(10_000_000, 10, 10, 1);
         bench_proto_after(10_000_000, 10, 10);
         bench_delta(10_000_000);
     }
