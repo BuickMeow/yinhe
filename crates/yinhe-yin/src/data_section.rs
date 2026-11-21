@@ -177,14 +177,7 @@ pub(crate) fn encode_note_streams(
         .unwrap_or(0) as usize;
     let track_slots = (max_track + 1).max(model.tracks.len()).max(1);
     let track_counts: Vec<u32> = (0..track_slots)
-        .map(|i| {
-            model
-                .track_note_count
-                .get(i)
-                .copied()
-                .unwrap_or(0)
-                .min(u32::MAX as u64) as u32
-        })
+        .map(|i| model.track_note_count.get(i).copied().unwrap_or(0))
         .collect();
 
     // per-track 列缓冲：同一 track 的音符按 start 递增出现，直接追加即段内有序。

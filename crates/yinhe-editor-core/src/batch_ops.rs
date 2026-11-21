@@ -382,7 +382,7 @@ pub(crate) fn compose_move_delta(
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SelectedNoteSummary {
     /// 选中音符总数。
-    pub count: u64,
+    pub count: u32,
     /// 全部选中音符 velocity 相同时为 Some（用于编辑框显示），否则 None。
     pub velocity: Option<u8>,
     /// 全部选中音符 gate（end-start）相同时为 Some。

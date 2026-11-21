@@ -401,7 +401,7 @@ impl Document {
                     continue;
                 }
                 let mut copy = yinhe_core::Note {
-                    id: model.alloc_note_id(),
+                    id: model.alloc_note_id()?,
                     start_tick: start,
                     end_tick: n.end_tick.saturating_add(offset - clip.start_tick),
                     ..*n
@@ -465,7 +465,7 @@ impl Document {
                     continue;
                 }
                 let mut copy = yinhe_core::Note {
-                    id: model.alloc_note_id(),
+                    id: model.alloc_note_id()?,
                     start_tick: start,
                     end_tick: n
                         .end_tick

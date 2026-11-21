@@ -50,7 +50,7 @@ pub struct MidiImportTrackInfo {
     pub name: String,
     pub port: u8,
     pub channel: u8,
-    pub note_count: u64,
+    pub note_count: u32,
     pub has_automation: bool,
 }
 
@@ -58,7 +58,7 @@ pub struct MidiImportTrackInfo {
 pub struct MidiImportSummary {
     pub tracks: Vec<MidiImportTrackInfo>,
     pub ppq: u32,
-    pub note_count: u64,
+    pub note_count: u32,
     pub length_ticks: u64,
     pub tempo_events: usize,
     pub time_sig_events: usize,
@@ -330,6 +330,10 @@ pub fn merge_midi_into_model(
     append_conductor_lyrics_chords(dst, &src.conductor);
 
     let note_id_start = dst.next_note_id;
+    // 先按 src 总量做上界检查，避免批量导入中途 id 耗尽留下半截模型。
+    if u64::from(src.note_count) > u64::from(u32::MAX - dst.next_note_id) {
+        return None;
+    }
     let mut note_count = 0u64;
     let mut note_keys: Vec<u8> = Vec::new();
     let src_total = src.note_count.max(1);
@@ -340,7 +344,7 @@ pub fn merge_midi_into_model(
                 continue;
             };
             let mut note = *n;
-            note.id = dst.alloc_note_id();
+            note.id = dst.alloc_note_id()?;
             note.track = new_track as u16;
             if note.end_tick <= note.start_tick {
                 note.end_tick = note.start_tick.saturating_add(1);

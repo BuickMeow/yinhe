@@ -157,7 +157,7 @@ pub fn write_to_writer_with_progress<W: Write>(
     // 索引阶段用 `model.note_count` 作总数为上界；收集完再以实际入轨数校正
     // （极少见：音符的 track 越界会被丢弃）。取两者较大值，保证进度不回退。
     let actual_notes: u64 = per_track_notes.iter().map(|v| v.len() as u64).sum();
-    let notes_total = model.note_count.max(actual_notes);
+    let notes_total = u64::from(model.note_count).max(actual_notes);
     progress(MidiExportProgress {
         stage: MidiExportStage::Indexing,
         notes_done: notes_total,
@@ -317,7 +317,7 @@ fn build_note_index(
     total_tracks: usize,
     progress: &mut impl FnMut(MidiExportProgress),
 ) -> Vec<Vec<NoteRef>> {
-    let notes_total = model.note_count;
+    let notes_total = u64::from(model.note_count);
     let mut per_track: Vec<Vec<NoteRef>> = (0..total_tracks)
         .map(|i| {
             Vec::with_capacity(
@@ -326,7 +326,7 @@ fn build_note_index(
                     .get(i)
                     .copied()
                     .unwrap_or(0)
-                    .min(usize::MAX as u64) as usize,
+                    .min(usize::MAX as u32) as usize,
             )
         })
         .collect();

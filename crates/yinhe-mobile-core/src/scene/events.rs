@@ -425,13 +425,15 @@ impl EventRow {
 fn events_total_for(model: &yinhe_core::YinModel, track: i32) -> u64 {
     use yinhe_types::automation::AutomationTarget;
     let notes = if track < 0 {
-        model.note_count
+        u64::from(model.note_count)
     } else {
-        model
-            .track_note_count
-            .get(track as usize)
-            .copied()
-            .unwrap_or(0)
+        u64::from(
+            model
+                .track_note_count
+                .get(track as usize)
+                .copied()
+                .unwrap_or(0),
+        )
     };
     let mut total = notes;
     for (ti, t) in model.tracks.iter().enumerate() {

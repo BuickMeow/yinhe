@@ -301,7 +301,7 @@ impl Document {
             let mut after = Vec::new();
             for (key, notes) in new_by_key.iter_mut() {
                 for n in notes.iter_mut() {
-                    n.id = model.alloc_note_id();
+                    n.id = model.alloc_note_id()?;
                     after.push((*n, *key));
                 }
             }
@@ -393,7 +393,7 @@ impl Document {
             let mut after: Vec<(yinhe_types::Note, u8)> = Vec::new();
             for (key, notes) in new_by_key.iter_mut() {
                 for n in notes.iter_mut() {
-                    n.id = model.alloc_note_id();
+                    n.id = model.alloc_note_id()?;
                     after.push((*n, *key));
                 }
             }

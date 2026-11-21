@@ -894,13 +894,13 @@ pub struct YinModel {
     /// its track index and全局唯一 id。
     /// Compatible with `yinhe_types::NoteSource`.
     pub notes: Box<[Arc<NoteBucket>; KEY_COUNT]>,
-    pub note_count: u64,
+    pub note_count: u32,
     pub tick_length: u64,
     /// Per-track note count cache (avoids scanning KEY_COUNT buckets for stats).
-    pub track_note_count: Vec<u64>,
+    pub track_note_count: Vec<u32>,
     /// Per-track audible note count (velocity > 1). `> 0` means the track
     /// has at least one audible note. Replaces the old `track_has_audio_cache: Vec<bool>`.
-    pub track_audible_count: Vec<u64>,
+    pub track_audible_count: Vec<u32>,
 
     /// Dirty bucket tracking: `dirty_keys[k]` is true when bucket k has been
     /// modified and needs incremental stats. Buckets are kept sorted by the
@@ -921,18 +921,18 @@ pub struct YinModel {
 
     /// Per-bucket note count cache for O(D) incremental stats in `rebuild_dirty()`.
     /// Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
-    pub bucket_note_count: [u64; KEY_COUNT],
+    pub bucket_note_count: [u32; KEY_COUNT],
 
     /// Per-bucket per-track (total, audible) counts. Sparse: each bucket
     /// only stores tracks that actually have notes in it. Enables
     /// O(dirty bucket size) incremental `track_note_count` /
     /// `track_audible_count` updates in `rebuild_dirty()` instead of
     /// rescanning all KEY_COUNT buckets.
-    pub bucket_track_stats: [HashMap<u16, (u64, u64)>; KEY_COUNT],
+    pub bucket_track_stats: [HashMap<u16, (u32, u32)>; KEY_COUNT],
 
     /// 全局音符 id 发号器（下一个待分配的 id）。
     /// 0 保留为"未分配"哨兵，实际 id 从 1 开始。
-    /// 编辑时调 `alloc_note_id()`，加载时由 `load_track_notes` 统一分配。
+    /// 编辑时调 `try_alloc_note_id()` / `alloc_note_id()`，加载时由 `load_track_notes` 统一分配。
     pub next_note_id: u32,
     /// 全局 Clip id 发号器（0 保留哨兵，实际从 1 开始）。
     pub next_clip_id: u32,
@@ -2867,7 +2867,7 @@ mod tests {
 pub struct TrackInfo {
     pub index: u16,
     pub name: String,
-    pub note_count: u64,
+    pub note_count: u32,
     pub event_count: u64,
     pub port: u8,
     pub channel: u8,

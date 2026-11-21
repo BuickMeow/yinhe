@@ -49,10 +49,9 @@ impl YinModel {
     }
 
     /// 分配一个新的全局唯一音符 id。编辑路径（新增/粘贴/复制）调用。
-    pub fn alloc_note_id(&mut self) -> u32 {
-        let id = self.next_note_id;
-        self.next_note_id = self.next_note_id.wrapping_add(1);
-        id
+    /// 到 `u32::MAX` 返回 `None`，不再回绕。
+    pub fn alloc_note_id(&mut self) -> Option<u32> {
+        self.try_alloc_note_id()
     }
 
     /// 带上限检查的 id 分配。到 `u32::MAX` 返回 `None`，不再回绕。
@@ -63,6 +62,15 @@ impl YinModel {
         }
         self.next_note_id = id.checked_add(1)?;
         Some(id)
+    }
+
+    /// 批量预留 `count` 个连续 id，返回起始 id。
+    /// 与逐个 `try_alloc_note_id` 等价，但只检查一次上限。
+    pub fn alloc_note_id_range(&mut self, count: u32) -> Option<u32> {
+        let start = self.next_note_id;
+        let end = start.checked_add(count)?;
+        self.next_note_id = end;
+        Some(start)
     }
 
     /// 单音符编辑的统计增量：用 before/after 直接更新计数与 tick_length，
@@ -197,31 +205,33 @@ impl YinModel {
 
         // Recompute note_count, max_tick, track_note_count, track_audible_count
         // (may have changed after edits or track insertions).
-        let mut note_count: u64 = 0;
+        let mut note_count: u32 = 0;
         let mut max_tick: u64 = 0;
-        let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
-        let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
+        let mut track_counts: Vec<u32> = vec![0u32; self.tracks.len()];
+        let mut track_audible: Vec<u32> = vec![0u32; self.tracks.len()];
         // Per-bucket per-track stats — recomputed in the same pass so
         // rebuild_dirty() can do incremental updates later.
-        let mut bucket_stats: [HashMap<u16, (u64, u64)>; KEY_COUNT] =
+        let mut bucket_stats: [HashMap<u16, (u32, u32)>; KEY_COUNT] =
             core::array::from_fn(|_| HashMap::new());
         for (k, bucket) in self.notes.iter().enumerate() {
-            note_count += bucket.len() as u64;
+            note_count = note_count.saturating_add(bucket.len().min(u32::MAX as usize) as u32);
             for n in bucket.iter() {
                 let end = n.end_tick as u64;
                 if end > max_tick {
                     max_tick = end;
                 }
                 if (n.track as usize) < track_counts.len() {
-                    track_counts[n.track as usize] += 1;
+                    track_counts[n.track as usize] =
+                        track_counts[n.track as usize].saturating_add(1);
                     if n.velocity > 1 {
-                        track_audible[n.track as usize] += 1;
+                        track_audible[n.track as usize] =
+                            track_audible[n.track as usize].saturating_add(1);
                     }
                 }
                 let e = bucket_stats[k].entry(n.track).or_insert((0, 0));
-                e.0 += 1;
+                e.0 = e.0.saturating_add(1);
                 if n.velocity > 1 {
-                    e.1 += 1;
+                    e.1 = e.1.saturating_add(1);
                 }
             }
         }
@@ -236,7 +246,7 @@ impl YinModel {
             .zip(self.bucket_track_stats.iter_mut())
             .enumerate()
         {
-            *count = notes[k].len() as u64;
+            *count = notes[k].len().min(u32::MAX as usize) as u32;
             *stats = std::mem::take(&mut bucket_stats[k]);
         }
 
@@ -259,8 +269,8 @@ impl YinModel {
             .filter(|&&v| v != u16::MAX)
             .max()
             .map_or(0, |&m| m as usize + 1);
-        let mut counts = vec![0u64; new_len];
-        let mut audible = vec![0u64; new_len];
+        let mut counts = vec![0u32; new_len];
+        let mut audible = vec![0u32; new_len];
         for (old, &new) in remap.iter().enumerate() {
             if new == u16::MAX {
                 continue;
@@ -348,9 +358,10 @@ impl YinModel {
             let old = self.bucket_note_count[k] as i64;
             let new = self.notes[k].len() as i64;
             delta_note_count += new - old;
-            self.bucket_note_count[k] = new as u64;
+            self.bucket_note_count[k] = u32::try_from(new).unwrap_or(u32::MAX);
         }
-        self.note_count = (self.note_count as i64 + delta_note_count) as u64;
+        self.note_count =
+            u32::try_from(self.note_count as i64 + delta_note_count).unwrap_or(u32::MAX);
         // tick_length 直接取每桶块级 max_ends 的最大值；不维护第二份
         // per-key 缓存。O(总块数)，且删除/缩短最后一个音符时能正确收缩。
         self.tick_length = self
@@ -376,7 +387,7 @@ impl YinModel {
             }
 
             // Recompute this bucket's per-track stats from current notes.
-            let mut new_stats: HashMap<u16, (u64, u64)> = HashMap::new();
+            let mut new_stats: HashMap<u16, (u32, u32)> = HashMap::new();
             for n in self.notes[k].iter() {
                 let e = new_stats.entry(n.track).or_insert((0, 0));
                 e.0 += 1;
@@ -661,11 +672,11 @@ pub struct RescaleProgress {
 /// 传入 `per_key_count` 可精确预分配各 key 桶容量（避免 Vec 动态翻倍）。
 pub struct NoteLoader {
     key_notes: [Vec<Note>; KEY_COUNT],
-    note_count: u64,
+    note_count: u32,
     max_tick: u64,
-    track_counts: Vec<u64>,
-    track_audible: Vec<u64>,
-    bucket_stats: [HashMap<u16, (u64, u64)>; KEY_COUNT],
+    track_counts: Vec<u32>,
+    track_audible: Vec<u32>,
+    bucket_stats: [HashMap<u16, (u32, u32)>; KEY_COUNT],
     max_id_seen: u32,
     next_note_id: u32,
     /// 每轨第一个音符 start / 最后一个音符 end，用于初始化整轨 Clip。
@@ -680,8 +691,8 @@ impl NoteLoader {
             key_notes: core::array::from_fn(|k| Vec::with_capacity(per_key_count[k] as usize)),
             note_count: 0,
             max_tick: 0,
-            track_counts: vec![0u64; track_count],
-            track_audible: vec![0u64; track_count],
+            track_counts: vec![0u32; track_count],
+            track_audible: vec![0u32; track_count],
             bucket_stats: core::array::from_fn(|_| HashMap::new()),
             max_id_seen: 0,
             next_note_id,
@@ -705,21 +716,22 @@ impl NoteLoader {
         if end > self.max_tick {
             self.max_tick = end;
         }
-        self.note_count += 1;
+        self.note_count = self.note_count.saturating_add(1);
         if (track as usize) < self.track_counts.len() {
-            self.track_counts[track as usize] += 1;
+            self.track_counts[track as usize] = self.track_counts[track as usize].saturating_add(1);
             self.track_min_start[track as usize] =
                 self.track_min_start[track as usize].min(start_tick);
             self.track_max_end[track as usize] =
                 self.track_max_end[track as usize].max(end_tick as u64);
             if velocity > 1 {
-                self.track_audible[track as usize] += 1;
+                self.track_audible[track as usize] =
+                    self.track_audible[track as usize].saturating_add(1);
             }
         }
         // id 分配：0 = 未分配，从发号器取；非 0 = 外部分配，保留并跟踪 max。
         let id = if id == 0 {
             let id = self.next_note_id;
-            self.next_note_id = self.next_note_id.wrapping_add(1);
+            self.next_note_id = self.next_note_id.saturating_add(1);
             id
         } else {
             if id > self.max_id_seen {
@@ -754,8 +766,8 @@ impl NoteLoader {
     /// 排序本身是单次库调用，无法在桶内分片；因此以桶为采样点，
     /// 但 done/total 始终是真实音符数，不是 key 下标。
     pub fn finish_with_progress(mut self, model: &mut YinModel, mut on_notes: impl FnMut(u64)) {
-        if self.max_id_seen + 1 > self.next_note_id {
-            self.next_note_id = self.max_id_seen + 1;
+        if self.max_id_seen.saturating_add(1) > self.next_note_id {
+            self.next_note_id = self.max_id_seen.saturating_add(1);
         }
         model.next_note_id = self.next_note_id;
 
@@ -769,7 +781,7 @@ impl NoteLoader {
             done += v.len() as u64;
             v.sort_unstable_by_key(|n| n.start_tick);
             model.notes[key] = Arc::new(NoteBucket::from_sorted(v));
-            on_notes(done.min(total));
+            on_notes(done.min(u64::from(total)));
         }
         model.note_count = self.note_count;
         model.tick_length = self.max_tick;
@@ -781,7 +793,7 @@ impl NoteLoader {
         model.track_note_count = self.track_counts;
         model.track_audible_count = self.track_audible;
         for (k, bucket) in model.notes.iter().enumerate() {
-            model.bucket_note_count[k] = bucket.len() as u64;
+            model.bucket_note_count[k] = bucket.len().min(u32::MAX as usize) as u32;
             model.bucket_track_stats[k] = std::mem::take(&mut self.bucket_stats[k]);
         }
         // Clip v1：映射里已带 Clip 的轨道保留原值；其余非空轨生成整轨 Clip。

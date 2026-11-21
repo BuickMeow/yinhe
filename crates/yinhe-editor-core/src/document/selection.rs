@@ -267,6 +267,7 @@ impl Document {
 
         let allow_overlap = self.edit.allow_overlapping_notes;
         let model = Arc::make_mut(&mut self.data.model);
+        let mut next_id = model.alloc_note_id_range(u32::try_from(src_count).ok()?)?;
 
         // 第二遍：一次遍历同时构建「按 key 分组的插入批次」与「undo 的 after」，
         // 两者内容同源但不共享（insert_batch 会消耗分组表）。
@@ -306,7 +307,11 @@ impl Document {
                 return;
             }
             let new_note = yinhe_types::Note {
-                id: model.alloc_note_id(),
+                id: {
+                    let id = next_id;
+                    next_id = next_id.saturating_add(1);
+                    id
+                },
                 start_tick: new_start,
                 end_tick: new_end,
                 velocity: note.velocity,

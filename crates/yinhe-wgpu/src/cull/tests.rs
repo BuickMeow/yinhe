@@ -1825,7 +1825,7 @@ fn cull_multi_frame_interaction_sequence() {
     {
         let k = 60u8;
         let start = (model.tick_length / 2) as u32;
-        let id = model.alloc_note_id();
+        let id = model.alloc_note_id().expect("测试中 id 不应耗尽");
         std::sync::Arc::make_mut(&mut model.notes[k as usize]).insert_sorted(yinhe_types::Note {
             id,
             start_tick: start,

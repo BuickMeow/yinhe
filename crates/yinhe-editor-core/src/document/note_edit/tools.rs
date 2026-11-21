@@ -41,7 +41,9 @@ impl Document {
                 if targets.is_empty() {
                     continue;
                 }
-                let new_ids: Vec<u32> = (0..targets.len()).map(|_| model.alloc_note_id()).collect();
+                let new_ids: Vec<u32> = (0..targets.len())
+                    .map(|_| model.alloc_note_id())
+                    .collect::<Option<Vec<_>>>()?;
                 let mut halves = Vec::with_capacity(targets.len() * 2);
                 for (n, new_id) in targets.iter().zip(new_ids) {
                     let left = yinhe_types::Note {
@@ -190,7 +192,7 @@ impl Document {
                         before.push((*n, key));
                         let mut seg_start = n.start_tick;
                         for (i, &cut) in cuts.iter().enumerate() {
-                            let id = if i == 0 { n.id } else { model.alloc_note_id() };
+                            let id = if i == 0 { n.id } else { model.alloc_note_id()? };
                             let seg = yinhe_types::Note {
                                 id,
                                 start_tick: seg_start,
@@ -202,7 +204,7 @@ impl Document {
                             halves.push(seg);
                         }
                         let tail = yinhe_types::Note {
-                            id: model.alloc_note_id(),
+                            id: model.alloc_note_id()?,
                             start_tick: seg_start,
                             end_tick: n.end_tick,
                             ..*n
@@ -253,7 +255,7 @@ impl Document {
                     continue;
                 }
                 let note = yinhe_types::Note {
-                    id: model.alloc_note_id(),
+                    id: model.alloc_note_id()?,
                     start_tick: ev.start_tick,
                     end_tick: ev.end_tick.max(ev.start_tick.saturating_add(1)),
                     velocity: ev.velocity,

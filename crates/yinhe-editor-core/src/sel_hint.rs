@@ -8,7 +8,7 @@ use crate::document::Document;
 #[derive(Clone)]
 pub struct SelHintInfo {
     /// 选中音符数（PR/AR）或事件数（AM）。
-    pub count: u64,
+    pub count: u32,
     /// 时间跨度（bar.beat.tick→bar.beat.tick）。
     pub span: String,
 }
@@ -103,7 +103,7 @@ pub fn compute_sel_hint(doc: &Document) -> Option<SelHintInfo> {
             .map(|p| selected_am_events(doc, p).len())
             .sum();
         Some(SelHintInfo {
-            count: count as u64,
+            count: count as u32,
             span: format!("{}→{}", fmt(t0), fmt(t1)),
         })
     } else {

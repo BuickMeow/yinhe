@@ -473,7 +473,7 @@ fn track_order_preserved_when_ports_interleave() {
         total += count as u64;
         assert!(count > 0, "track {i} ({name}) 必须有音符");
     }
-    assert_eq!(total, m2.note_count);
+    assert_eq!(total, u64::from(m2.note_count));
 
     // automation lane.track 保持 model 索引，仍挂在原音轨上
     assert_eq!(m2.tracks[0].automation_lanes.len(), 1);

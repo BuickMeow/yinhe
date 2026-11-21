@@ -374,7 +374,7 @@ impl Document {
                     .entry(*old_key)
                     .or_default()
                     .push(yinhe_types::Note {
-                        id: model.alloc_note_id(),
+                        id: model.alloc_note_id()?,
                         start_tick: new_tick,
                         end_tick: new_tick + length,
                         velocity: note.velocity,

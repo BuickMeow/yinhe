@@ -578,7 +578,7 @@ fn test_track_existence_activates_channel() {
     assert_eq!(layout.compacted_channels(), 1);
 
     // 3. 加第一个音符（track 0 = ch 0）→ 同一引擎直接 dispatch
-    let id = model.alloc_note_id();
+    let id = model.alloc_note_id().expect("测试中 id 不应耗尽");
     let bucket = Arc::make_mut(&mut model.notes[60]);
     bucket.insert_sorted(yinhe_types::Note {
         id,
