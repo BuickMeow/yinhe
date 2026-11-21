@@ -128,51 +128,86 @@ pub fn event_rows_json() -> String {
     };
     let model = &doc.data.model;
     let conductor = &model.conductor;
-    let text_events = |iter: &mut dyn Iterator<Item = (u32, String)>| {
-        iter.map(|(tick, text)| serde_json::json!({"tick": tick, "text": text}))
-            .collect::<Vec<_>>()
-    };
 
-    let meter = if conductor.time_sig.is_empty() {
+    // 直接拼 JSON，避免每个事件构造一个 serde_json::Value。
+    fn push_text_events<'a>(
+        out: &mut String,
+        iter: impl Iterator<Item = (u32, std::borrow::Cow<'a, str>)>,
+    ) {
+        for (i, (tick, text)) in iter.enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!(
+                "{{\"tick\":{},\"text\":\"{}\"}}",
+                tick,
+                json_escape(&text)
+            ));
+        }
+    }
+
+    let mut out = String::from("{\"markers\":[");
+    push_text_events(
+        &mut out,
+        conductor
+            .markers
+            .iter()
+            .map(|e| (e.tick, std::borrow::Cow::Borrowed(e.text.as_str()))),
+    );
+    out.push_str("],\"meter\":[");
+    if conductor.time_sig.is_empty() {
         let (num, den) = model.tempo_map.time_sig_default;
-        vec![serde_json::json!({
-            "tick": 0,
-            "text": format!("{num}/{}", 1u32 << u32::from(den.min(5))),
-        })]
+        out.push_str(&format!(
+            "{{\"tick\":0,\"text\":\"{num}/{}\"}}",
+            1u32 << u32::from(den.min(5))
+        ));
     } else {
-        text_events(&mut conductor.time_sig.iter().map(|e| {
+        push_text_events(
+            &mut out,
+            conductor.time_sig.iter().map(|e| {
+                (
+                    e.tick,
+                    std::borrow::Cow::Owned(format!(
+                        "{}/{}",
+                        e.numerator,
+                        1u32 << u32::from(e.denominator.min(5))
+                    )),
+                )
+            }),
+        );
+    }
+    out.push_str("],\"key\":[");
+    push_text_events(
+        &mut out,
+        conductor.key_sig.iter().map(|e| {
             (
                 e.tick,
-                format!(
-                    "{}/{}",
-                    e.numerator,
-                    1u32 << u32::from(e.denominator.min(5))
-                ),
+                std::borrow::Cow::Owned(format!(
+                    "{} {}",
+                    yinhe_types::NOTE_NAMES[(e.root % 12) as usize],
+                    e.scale.english_name()
+                )),
             )
-        }))
-    };
-    let key = text_events(&mut conductor.key_sig.iter().map(|e| {
-        (
-            e.tick,
-            format!(
-                "{} {}",
-                yinhe_types::NOTE_NAMES[(e.root % 12) as usize],
-                e.scale.english_name()
-            ),
-        )
-    }));
-    let markers = text_events(&mut conductor.markers.iter().map(|e| (e.tick, e.text.clone())));
-    let chord = text_events(&mut conductor.chord.iter().map(|e| (e.tick, e.text.clone())));
-    let lyrics = text_events(&mut conductor.lyrics.iter().map(|e| (e.tick, e.text.clone())));
-
-    serde_json::json!({
-        "markers": markers,
-        "meter": meter,
-        "key": key,
-        "chord": chord,
-        "lyrics": lyrics,
-    })
-    .to_string()
+        }),
+    );
+    out.push_str("],\"chord\":[");
+    push_text_events(
+        &mut out,
+        conductor
+            .chord
+            .iter()
+            .map(|e| (e.tick, std::borrow::Cow::Borrowed(e.text.as_str()))),
+    );
+    out.push_str("],\"lyrics\":[");
+    push_text_events(
+        &mut out,
+        conductor
+            .lyrics
+            .iter()
+            .map(|e| (e.tick, std::borrow::Cow::Borrowed(e.text.as_str()))),
+    );
+    out.push_str("]}");
+    out
 }
 
 /// 在 tick 处插入一个标签（空文本 = 显示小节位置）。成功 1。
