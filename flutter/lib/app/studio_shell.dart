@@ -392,6 +392,7 @@ abstract class _ShellBase extends State<StudioShell>
 
   /// 帧计数（时间码/工程状态降频）。
   int _frameCounter = 0;
+  DateTime? _lastFrameAt;
 
   /// 音色库热切换进度（低频轮询，切换期间驱动底部小进度条）。
   void _readSfProgress() {
@@ -646,6 +647,20 @@ class _StudioShellState extends _ShellBase
       }
     });
     _ticker = createTicker((_) {
+      // 帧间隔看门狗：现场只会在超过 1s 时打一条，用来确认卡顿发生在哪个
+      // 视图/是否播放/是否正在拖拽；正常帧不产生任何日志。
+      final now = DateTime.now();
+      final last = _lastFrameAt;
+      _lastFrameAt = now;
+      if (last != null) {
+        final gap = now.difference(last).inMilliseconds;
+        if (gap > 1000) {
+          debugPrint(
+            '[yinhe] frame gap ${gap}ms mode=$_viewMode playing=$_playing '
+            'editing=$_gestureEditing pointers=${_pointerPositions.length}',
+          );
+        }
+      }
       // 模态路由（各类对话框）或全屏设置页在上层时编辑器被完全遮住：跳过
       // wgpu 帧提交与视图同步。`renderFrame` 会同步等待渲染线程 present，
       // 被遮住还每帧提交会白烧 GPU/UI 线程。帧循环仍保持，关闭后自动恢复。
