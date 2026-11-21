@@ -662,10 +662,9 @@ pub fn commit_erase(
             };
             let doc = s.document.as_mut()?;
             {
-                let Document { edit, data, .. } = doc;
+                let Document { edit, .. } = doc;
                 edit.selected.clear();
                 edit.selected.add_rect_track(ta, tb, klo, khi, tr_lo, tr_hi);
-                edit.selected.materialize_pending(&*data.model);
             }
             let before = doc.capture_snapshot();
             if let Some(action) = doc.delete_selected() {
@@ -687,7 +686,7 @@ pub fn commit_erase(
             let (tr_lo, tr_hi) = (ra.min(rb), ra.max(rb).min(num_tracks.saturating_sub(1)));
             let doc = s.document.as_mut()?;
             {
-                let Document { edit, data, .. } = doc;
+                let Document { edit, .. } = doc;
                 edit.selected.clear();
                 edit.selected.add_rect_track(
                     ta,
@@ -697,7 +696,6 @@ pub fn commit_erase(
                     tr_lo as u16,
                     tr_hi as u16,
                 );
-                edit.selected.materialize_pending(&*data.model);
             }
             let before = doc.capture_snapshot();
             if let Some(action) = doc.delete_selected() {
