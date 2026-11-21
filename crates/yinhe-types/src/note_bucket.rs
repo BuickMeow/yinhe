@@ -309,6 +309,132 @@ impl NoteBucket {
         }
     }
 
+    /// 按 `(start_tick, track)` 定位一个音符；`id` 仅在同 `(start, track)`
+    /// 有多个音符时消歧。
+    ///
+    /// 注意块切分可能把同一 `start_tick` 的音符放进相邻块：
+    /// `chunk_index_for` 返回最后一个 `starts <= start` 的块，目标可能在前一块，
+    /// 所以先向前回退，再向后扫描到块首 > start 为止。
+    fn locate_at(&self, start: u32, track: u16, id: Option<u32>) -> Option<(usize, usize)> {
+        if self.chunks.is_empty() {
+            return None;
+        }
+        let mut ci = self.chunk_index_for(start);
+        while ci > 0
+            && self.chunks[ci - 1]
+                .last()
+                .is_some_and(|n| n.start_tick >= start)
+        {
+            ci -= 1;
+        }
+        for (i, chunk) in self.chunks.iter().enumerate().skip(ci) {
+            let Some(first) = chunk.first() else {
+                continue;
+            };
+            if first.start_tick > start {
+                break;
+            }
+            let a = chunk.partition_point(|n| n.start_tick < start);
+            let b = chunk.partition_point(|n| n.start_tick <= start);
+            for (offset, n) in chunk[a..b].iter().enumerate() {
+                if n.track == track && id.is_none_or(|id| n.id == id) {
+                    return Some((i, a + offset));
+                }
+            }
+        }
+        None
+    }
+
+    /// 重算单块的 `starts` / `max_ends`。调用前块必须非空。
+    fn refresh_chunk_meta(&mut self, ci: usize) {
+        let chunk = &self.chunks[ci];
+        self.starts[ci] = chunk[0].start_tick;
+        self.max_ends[ci] = chunk.iter().map(|n| n.end_tick).max().unwrap_or(0);
+    }
+
+    /// 单点修改：`f` 可以改 end/velocity/track，也可以改 start。
+    /// start 改变时只搬移该音符（必要时跨块），不全局 `sort()`。
+    ///
+    /// 返回 `(before, after)`，供模型层做增量统计和 undo。
+    pub fn update_at(
+        &mut self,
+        start: u32,
+        track: u16,
+        id: u32,
+        f: impl FnOnce(&mut Note),
+    ) -> Option<(Note, Note)> {
+        let (ci, ni) = self.locate_at(start, track, Some(id))?;
+        let old = self.chunks[ci][ni];
+        let (new, start_changed, end_changed) = {
+            let chunk = Arc::make_mut(&mut self.chunks[ci]);
+            f(&mut chunk[ni]);
+            let new = chunk[ni];
+            (
+                new,
+                new.start_tick != old.start_tick,
+                new.end_tick != old.end_tick,
+            )
+        };
+
+        if start_changed {
+            let empty = {
+                let chunk = Arc::make_mut(&mut self.chunks[ci]);
+                let removed = chunk.remove(ni);
+                debug_assert_eq!(removed.id, id);
+                chunk.is_empty()
+            };
+            if empty {
+                self.chunks.remove(ci);
+                self.starts.remove(ci);
+                self.max_ends.remove(ci);
+            } else {
+                if ni == 0 {
+                    self.starts[ci] = self.chunks[ci][0].start_tick;
+                }
+                if old.end_tick == self.max_ends[ci] {
+                    self.refresh_chunk_meta(ci);
+                }
+            }
+            // insert_sorted 会同步目标块的 starts / max_ends，并处理块分裂。
+            self.insert_sorted(new);
+            return Some((old, new));
+        }
+
+        if end_changed {
+            if new.end_tick > self.max_ends[ci] {
+                self.max_ends[ci] = new.end_tick;
+            } else if old.end_tick == self.max_ends[ci] && new.end_tick < old.end_tick {
+                self.refresh_chunk_meta(ci);
+            }
+        }
+        Some((old, new))
+    }
+
+    /// 单点删除：只重算受影响块的元数据。
+    ///
+    /// 返回被删除的音符；找不到返回 `None`。
+    pub fn remove_at(&mut self, start: u32, track: u16, id: u32) -> Option<Note> {
+        let (ci, ni) = self.locate_at(start, track, Some(id))?;
+        let (note, empty) = {
+            let chunk = Arc::make_mut(&mut self.chunks[ci]);
+            let note = chunk.remove(ni);
+            (note, chunk.is_empty())
+        };
+        if empty {
+            self.chunks.remove(ci);
+            self.starts.remove(ci);
+            self.max_ends.remove(ci);
+        } else {
+            if ni == 0 {
+                self.starts[ci] = self.chunks[ci][0].start_tick;
+            }
+            if note.end_tick == self.max_ends[ci] {
+                self.refresh_chunk_meta(ci);
+            }
+        }
+        Some(note)
+    }
+
     /// 批量插入：新音符排序后按块切分，逐块双路归并（O(N + K)）。
     /// 归并结果按 65536 切块；块间有序性由切分保证。
     pub fn insert_batch_sorted(&mut self, mut new: Vec<Note>) {
@@ -986,5 +1112,147 @@ mod tests {
         assert!(b.remove_by_id(1).is_none());
         b.insert_sorted(note(1, 10));
         assert_eq!(b.len(), 1);
+    }
+
+    fn note_at(id: u32, start: u32, end: u32, track: u16) -> Note {
+        Note {
+            id,
+            start_tick: start,
+            end_tick: end,
+            velocity: 100,
+            track,
+        }
+    }
+
+    /// 同 start 被块切分到两个块时，两个目标都能被 `locate_at` 命中。
+    #[test]
+    fn locate_at_handles_equal_start_split() {
+        let notes: Vec<Note> = (0..BUCKET_CHUNK_CAP + 1)
+            .map(|i| note_at(i as u32, 0, 10, 0))
+            .collect();
+        let b = NoteBucket::from_sorted(notes);
+        assert_eq!(b.chunks.len(), 2, "应切成两个块");
+        assert_eq!(b.locate_at(0, 0, Some(0)), Some((0, 0)));
+        assert_eq!(
+            b.locate_at(0, 0, Some(BUCKET_CHUNK_CAP as u32)),
+            Some((1, 0)),
+            "第二块的目标不能被 chunk_index_for 漏掉"
+        );
+        assert!(b.locate_at(0, 1, None).is_none());
+    }
+
+    #[test]
+    fn update_at_keeps_max_ends_exact() {
+        let mut b = NoteBucket::from_sorted(vec![note(1, 0), note_at(2, 5, 1000, 0)]);
+        assert_eq!(b.max_ends, vec![1000]);
+
+        let (old, new) = b.update_at(0, 0, 1, |n| n.end_tick = 2000).expect("应命中");
+        assert_eq!(old.end_tick, 10);
+        assert_eq!(new.end_tick, 2000);
+        assert_eq!(b.max_ends, vec![2000]);
+
+        b.update_at(0, 0, 1, |n| n.end_tick = 1).expect("应命中");
+        assert_eq!(b.max_ends, vec![1000], "缩小非最大 end 不应重算");
+
+        b.update_at(5, 0, 2, |n| n.end_tick = 1).expect("应命中");
+        assert_eq!(b.max_ends, vec![1], "删掉最大 end 后应精确收缩");
+    }
+
+    #[test]
+    fn update_at_start_crosses_chunk() {
+        let notes: Vec<Note> = (0..BUCKET_CHUNK_CAP + 10)
+            .map(|i| note_at(i as u32, i as u32, i as u32 + 10, 0))
+            .collect();
+        let mut b = NoteBucket::from_sorted(notes);
+        assert!(b.chunks.len() > 1);
+
+        let (old, new) = b
+            .update_at(0, 0, 0, |n| {
+                n.start_tick = 70_000;
+                n.end_tick = 70_010;
+            })
+            .expect("应命中");
+        assert_eq!(old.start_tick, 0);
+        assert_eq!(new.start_tick, 70_000);
+        assert!(b.is_sorted(), "块间/块内必须保持有序");
+        assert_eq!(b.get(0).unwrap().id, 1, "原块首应变成 id 1");
+        assert_eq!(b.iter().find(|n| n.id == 0).unwrap().start_tick, 70_000);
+        assert_eq!(b.max_end_tick(), 70_010);
+    }
+
+    #[test]
+    fn remove_at_updates_starts_and_removes_empty_chunk() {
+        let mut b = NoteBucket::from_sorted(vec![note(1, 10), note(2, 20), note(3, 30)]);
+        let removed = b.remove_at(10, 0, 1).expect("应命中");
+        assert_eq!(removed.id, 1);
+        assert_eq!(b.starts, vec![20]);
+        assert!(b.is_sorted());
+
+        let mut one = NoteBucket::from_sorted(vec![note(9, 100)]);
+        assert_eq!(one.remove_at(100, 0, 9).unwrap().id, 9);
+        assert!(one.is_empty());
+        assert!(one.starts.is_empty());
+        assert!(one.max_ends.is_empty());
+    }
+
+    /// 单点修改只深拷贝触达块，未触达块保持 Arc 共享。
+    #[test]
+    fn update_at_copies_only_touched_chunk() {
+        let notes: Vec<Note> = (0..BUCKET_CHUNK_CAP * 2)
+            .map(|i| note_at(i as u32, i as u32, i as u32 + 10, 0))
+            .collect();
+        let mut b = NoteBucket::from_sorted(notes);
+        let snapshot = b.clone();
+        assert_eq!(b.chunks.len(), 2);
+
+        b.update_at(0, 0, 0, |n| n.end_tick = 999_999)
+            .expect("应命中");
+        assert!(
+            !Arc::ptr_eq(&b.chunks[0], &snapshot.chunks[0]),
+            "触达块应被复制"
+        );
+        assert!(
+            Arc::ptr_eq(&b.chunks[1], &snapshot.chunks[1]),
+            "未触达块必须保持共享"
+        );
+    }
+
+    #[test]
+    fn update_at_and_remove_at_random_oracle() {
+        let mut rng = 0x1234_5678_9ABC_DEF0u64;
+        let mut next = || {
+            rng = rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = rng;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+
+        let mut notes: Vec<Note> = (0..2000u32).map(|i| note_at(i, i, i + 10, 0)).collect();
+        notes.sort_by_key(|n| n.start_tick);
+        let mut b = NoteBucket::from_sorted(notes);
+
+        for _ in 0..300 {
+            let id = (next() % 2000) as u32;
+            let Some(n) = b.iter().find(|n| n.id == id).copied() else {
+                continue;
+            };
+            if next() % 3 == 0 {
+                let removed = b.remove_at(n.start_tick, n.track, id).expect("应命中");
+                assert_eq!(removed.id, id);
+            } else {
+                let new_start = (next() % 3000) as u32;
+                let new_end = new_start + 10;
+                b.update_at(n.start_tick, n.track, id, |x| {
+                    x.start_tick = new_start;
+                    x.end_tick = new_end;
+                })
+                .expect("应命中");
+            }
+            assert!(b.is_sorted(), "随机操作后必须有序");
+            assert_eq!(b.len(), b.iter().count());
+            let max_end = b.iter().map(|n| n.end_tick).max().unwrap_or(0);
+            assert_eq!(b.max_end_tick(), max_end, "max_end 必须精确");
+        }
     }
 }
