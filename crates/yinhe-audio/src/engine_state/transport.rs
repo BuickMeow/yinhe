@@ -240,13 +240,8 @@ impl AudioEngine {
         if is_seek {
             let crossings = self.crossing_notes(tick);
             crate::audio_renderer::play_log(&format!(
-                "[play] seek tick={tick} crossing={} max_note_len={}",
-                crossings.len(),
-                self.playback
-                    .yin_model
-                    .as_ref()
-                    .map(|m| m.max_note_len)
-                    .unwrap_or(0)
+                "[play] seek tick={tick} crossing={}",
+                crossings.len()
             ));
             for (key, n, end_tick) in crossings {
                 self.restart_note(key, &n, end_tick);

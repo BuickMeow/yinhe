@@ -215,21 +215,19 @@ pub fn collect_selected(model: &YinModel, selection: &Selection) -> Vec<(Note, u
 
 /// 「新音符是否与已有音符重叠」判定：同 track && [start, end) 区间相交。
 ///
-/// 候选窗口用 `model.max_note_len` 保守左扩（与 PR 悬停 hit-test 同思路）：
-/// 任何重叠音符必满足 `start_tick ∈ [start - max_note_len, end)`（相交要求
-/// `ns < end && ne > start`，而 `gate ≤ max_note_len` ⟹ `ns > start - max_note_len`），
-/// 再用精确条件 `n.end_tick > start` 过滤。`max_note_len` 只增不减，
-/// 过期偏大只会放宽窗口、绝不漏候选。左闭右开区间：首尾相接不算重叠。
+/// 候选窗口用 `NoteBucket` 的块级 `max_end_tick` 自动左扩：
+/// 任何重叠音符必满足 `start_tick < end && end_tick > start`，块级索引
+/// 会跳过整块在 `start` 左侧结束的块，再用精确条件过滤。左闭右开区间：
+/// 首尾相接不算重叠。
 ///
 /// 复杂度 O(log 块数 + 窗口内候选数)，不做全桶线性扫描。
 pub fn has_overlapping_note(model: &YinModel, track: u16, key: u8, start: u32, end: u32) -> bool {
     if end <= start {
         return false; // 零长/反向区间不与任何音符相交（编辑入口保证 gate >= 1，防御用）
     }
-    let lo = start.saturating_sub(model.max_note_len);
     model.notes[key as usize]
-        .range(lo, end)
-        .any(|n| n.track == track && n.end_tick > start)
+        .range_including_long(start, end)
+        .any(|n| n.track == track && n.start_tick < end && n.end_tick > start)
 }
 
 /// 排除自身 id 的重叠判定（单音符原地编辑：move/resize 前检查用）。
@@ -247,10 +245,9 @@ pub fn has_overlapping_note_excluding(
     if end <= start {
         return false;
     }
-    let lo = start.saturating_sub(model.max_note_len);
     model.notes[key as usize]
-        .range(lo, end)
-        .any(|n| n.id != exclude_id && n.track == track && n.end_tick > start)
+        .range_including_long(start, end)
+        .any(|n| n.id != exclude_id && n.track == track && n.start_tick < end && n.end_tick > start)
 }
 
 /// 搬运类操作的收集状态（被拦三分支与原/目标音符的 undo 记录）。
@@ -343,10 +340,10 @@ pub(crate) fn move_one_note_blocked(
             tally.deleted_before.push((note, old_key));
         }
         OverlapBlockedBehavior::ReplaceTarget => {
-            let lo = new_tick.saturating_sub(model.max_note_len);
+            let new_end = new_tick + length;
             let overlapping: Vec<Note> = model.notes[new_key as usize]
-                .range(lo, new_tick + length)
-                .filter(|n| n.track == new_track && n.end_tick > new_tick)
+                .range_including_long(new_tick, new_end)
+                .filter(|n| n.track == new_track && n.start_tick < new_end && n.end_tick > new_tick)
                 .cloned()
                 .collect();
             if !overlapping.is_empty() {

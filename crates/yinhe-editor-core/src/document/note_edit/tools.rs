@@ -24,25 +24,19 @@ impl Document {
             let selected = &self.edit.track_selected;
             let visible = &self.edit.track_pianoroll_visible;
             let model = Arc::make_mut(&mut self.data.model);
-            let max_len = model.max_note_len;
             for &(key, cut) in cuts {
                 if key as usize >= yinhe_types::KEY_COUNT {
                     continue;
                 }
                 let targets = {
                     let bucket = Arc::make_mut(&mut model.notes[key as usize]);
-                    // 左界用全曲最长音符收紧：start < cut 且 end > cut 的音符
-                    // 必然落在 [cut - max_len, cut] 内。
-                    bucket.drain_range_filtered(
-                        cut.saturating_sub(max_len),
-                        cut.saturating_add(1),
-                        |n| {
-                            n.start_tick < cut
-                                && n.end_tick > cut
-                                && (selected.is_empty() || selected.contains(&n.track))
-                                && visible.get(n.track as usize).copied().unwrap_or(true)
-                        },
-                    )
+                    // 块级 max_end 自动左扩，跨越 cut 的长音符不会漏。
+                    bucket.drain_range_including_long(cut, cut.saturating_add(1), |n| {
+                        n.start_tick < cut
+                            && n.end_tick > cut
+                            && (selected.is_empty() || selected.contains(&n.track))
+                            && visible.get(n.track as usize).copied().unwrap_or(true)
+                    })
                 };
                 if targets.is_empty() {
                     continue;
@@ -158,7 +152,6 @@ impl Document {
         {
             let selected = &self.edit.track_selected;
             let model = Arc::make_mut(&mut self.data.model);
-            let max_len = model.max_note_len;
             for &(t0f, t1f, key_lo, key_hi, track_lo, track_hi) in &rects {
                 let t0 = t0f.max(0.0) as u32;
                 let t1 = t1f.max(0.0) as u32;
@@ -168,22 +161,18 @@ impl Document {
                 for key in key_lo..=key_hi {
                     let targets = {
                         let bucket = Arc::make_mut(&mut model.notes[key as usize]);
-                        bucket.drain_range_filtered(
-                            t0.saturating_sub(max_len),
-                            t1.saturating_add(1),
-                            |n| {
-                                let track = n.track;
-                                n.start_tick < t1
-                                    && n.end_tick > t0
-                                    && track >= track_lo
-                                    && track <= track_hi
-                                    && (arrangement
-                                        || selected.is_empty()
-                                        || selected.contains(&n.track))
-                                    && visible.get(n.track as usize).copied().unwrap_or(true)
-                                    && !grid_cuts_in_note(n, t0, t1, interval).is_empty()
-                            },
-                        )
+                        bucket.drain_range_including_long(t0, t1.saturating_add(1), |n| {
+                            let track = n.track;
+                            n.start_tick < t1
+                                && n.end_tick > t0
+                                && track >= track_lo
+                                && track <= track_hi
+                                && (arrangement
+                                    || selected.is_empty()
+                                    || selected.contains(&n.track))
+                                && visible.get(n.track as usize).copied().unwrap_or(true)
+                                && !grid_cuts_in_note(n, t0, t1, interval).is_empty()
+                        })
                     };
                     if targets.is_empty() {
                         continue;

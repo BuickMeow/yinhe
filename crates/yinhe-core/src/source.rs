@@ -32,10 +32,6 @@ impl NoteSource for YinModel {
         Some(self.tick_length)
     }
 
-    fn max_note_len(&self) -> u32 {
-        self.max_note_len
-    }
-
     /// 用该 key 的块级 `max_end_tick` 收紧左界：整块在视口左侧结束就跳过。
     /// 长音符只影响自己所在的 65536 音符块，不再拖慢其他块/其他 key。
     fn key_notes_in_range(&self, key: u8, tick_start: u32, tick_end: u32) -> NoteRangeIter<'_> {

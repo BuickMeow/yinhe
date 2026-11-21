@@ -424,21 +424,19 @@ fn b6_seek_cost() {
     });
     let sample = (415.38 * 48_000.0) as u64;
     let tick = engine.sample_to_tick(sample);
-    let lo = tick.saturating_sub(model.max_note_len);
     let mut window_notes = 0usize;
     let mut audible = 0usize;
     for key in 0..256 {
-        for n in model.notes[key].range(lo, tick) {
-            window_notes += 1;
-            if n.velocity > 1 {
-                audible += 1;
+        for n in model.notes[key].range_including_long(tick, tick.saturating_add(1)) {
+            if n.end_tick > tick {
+                window_notes += 1;
+                if n.velocity > 1 {
+                    audible += 1;
+                }
             }
         }
     }
-    eprintln!(
-        "\n[B6] seek 成本\n  max_note_len={} tick={} 窗口=[{lo},{tick}) 窗口内音符={window_notes} 可听={audible}",
-        model.max_note_len, tick
-    );
+    eprintln!("\n[B6] seek 成本\n  tick={tick} 跨点音符={window_notes} 可听={audible}");
     let t = std::time::Instant::now();
     engine.handle_command(crate::spawn::AudioCommand::Seek { sample });
     eprintln!("  engine.seek={:.1}ms", t.elapsed().as_secs_f64() * 1000.0);
@@ -559,48 +557,6 @@ fn b9c_early_channels() {
         layout.num_channels(),
         (0..64).filter(|c| layout.is_active(*c)).collect::<Vec<_>>()
     );
-}
-
-#[test]
-#[ignore = "诊断"]
-fn b10_max_note_len_zero() {
-    const ECHOES: &str = "/Users/jieneng/Music/MIDIs/Echoes of Memoria v1.0.5Fixed.mid";
-    const GRAND: &str = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
-    let base = parse(ECHOES);
-    let sr = 48_000u32;
-    let mut engine = crate::engine::AudioEngine::new(sr, crate::spawn::channels_for_model(&base));
-    let mut m = (*base).clone();
-    m.max_note_len = 0;
-    let model = std::sync::Arc::new(m);
-    engine.handle_command(crate::spawn::AudioCommand::LoadModel {
-        model: std::sync::Arc::clone(&model),
-    });
-    let mut cs = yinhe_synth::CpuSynth::new(sr);
-    let denses: Vec<u32> = (0..crate::spawn::channels_for_model(&model).num_channels()).collect();
-    cs.load_dense_soundfonts_many(&denses, &[std::path::PathBuf::from(GRAND)])
-        .expect("sf");
-    engine.synth.cpu_synth = cs;
-    let mut buf = vec![0.0f32; 512 * 2];
-    for secs in [1.263f64, 2.842, 3.474, 10.737] {
-        let target = (secs * sr as f64) as u64;
-        engine.handle_command(crate::spawn::AudioCommand::Seek { sample: target });
-        engine.handle_command(crate::spawn::AudioCommand::Play {
-            from_sample: target,
-        });
-        let mut peaks = Vec::new();
-        for _ in 0..5 {
-            let mut peak = 0.0f32;
-            for _ in 0..10 {
-                engine.render(&mut buf);
-                peak = buf.iter().fold(peak, |m, s| m.max(s.abs()));
-            }
-            peaks.push(peak);
-        }
-        eprintln!(
-            "  max_note_len=0 跳转 {secs}s: peaks={peaks:.3?} voices={}",
-            engine.voice_count()
-        );
-    }
 }
 
 #[test]

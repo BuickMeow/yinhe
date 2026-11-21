@@ -11,17 +11,19 @@ use crate::engine::AudioEngine;
 impl AudioEngine {
     /// 扫描与 `tick` 相交的可听音符（`start < tick < end`）。
     ///
-    /// 只扫 `[tick - max_note_len, tick)` 这段有界窗口——旧实现扫 `notes[..cursor]`
-    /// 是从曲首开始的 O(N) 全量前缀扫描，seek 越晚越慢。返回
-    /// `(key, note, 0 BPM 截断后的 end_tick)`。
+    /// 用块级 `max_end_tick` 找到第一个可能跨过 `tick` 的块，不再依赖全局
+    /// 最长音符窗口。旧实现扫 `notes[..cursor]` 是从曲首开始的 O(N) 前缀
+    /// 扫描，seek 越晚越慢。返回 `(key, note, 0 BPM 截断后的 end_tick)`。
     pub(super) fn crossing_notes(&self, tick: u32) -> Vec<(usize, yinhe_types::Note, u32)> {
         let Some(model) = self.playback.yin_model.as_ref() else {
             return Vec::new();
         };
-        let lo = tick.saturating_sub(model.max_note_len);
         let mut out = Vec::new();
         for key in 0..KEY_COUNT {
-            for n in model.notes[key].range(lo, tick) {
+            for n in model.notes[key].range_including_long(tick, tick.saturating_add(1)) {
+                if n.start_tick >= tick {
+                    continue;
+                }
                 if let Some(end_tick) =
                     crate::prepare_model::audible_end(model, n, self.synth.ignore_velocity)
                     && end_tick > tick

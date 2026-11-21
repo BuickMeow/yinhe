@@ -103,6 +103,11 @@ impl NoteBucket {
         self.chunks.iter().map(|c| c.len()).sum()
     }
 
+    /// 桶内最大 `end_tick`（从块级 `max_ends` 求 max）。
+    pub fn max_end_tick(&self) -> u32 {
+        self.max_ends.iter().copied().max().unwrap_or(0)
+    }
+
     pub fn first(&self) -> Option<&Note> {
         self.chunks.first().and_then(|c| c.first())
     }
@@ -245,6 +250,24 @@ impl NoteBucket {
     fn first_intersecting_chunk(&self, tick_start: u32, tick_end: u32) -> Option<usize> {
         let end = self.starts.partition_point(|&s| s <= tick_end);
         (0..end).find(|&i| self.max_ends[i] >= tick_start)
+    }
+
+    /// 同 [`drain_range_filtered`](Self::drain_range_filtered)，但左界按块级
+    /// `max_end_tick` 自动外扩：起点远早于 `[lo, hi)`、但终点仍可能落入
+    /// 区间的长音符不会被漏掉，也不需要全局 `max_note_len`。
+    pub fn drain_range_including_long(
+        &mut self,
+        lo: u32,
+        hi: u32,
+        pred: impl FnMut(&Note) -> bool,
+    ) -> Vec<Note> {
+        let Some(first) = self.first_intersecting_chunk(lo, hi) else {
+            return Vec::new();
+        };
+        if hi == 0 || self.starts[first] >= hi {
+            return Vec::new();
+        }
+        self.drain_range_filtered(self.starts[first], hi, pred)
     }
 
     /// 重算每块 `max_end_tick`。`iter_mut` / 外部直接改 end 的路径必须调用。
@@ -803,6 +826,22 @@ mod tests {
         assert_eq!(b.len(), 70);
         assert_eq!(b.first().unwrap().start_tick, 0);
         assert_eq!(b.last().unwrap().start_tick, 990);
+    }
+
+    #[test]
+    fn drain_range_including_long_keeps_note_starting_far_before_window() {
+        let mut b = NoteBucket::from_sorted(vec![
+            Note {
+                end_tick: 10_000,
+                ..note(1, 0)
+            },
+            note(2, 9_000),
+            note(3, 20_000),
+        ]);
+        let removed = b.drain_range_including_long(9_500, 9_600, |n| n.end_tick > 9_500);
+        assert_eq!(removed.len(), 1, "长音符起点远早于窗口也必须命中");
+        assert_eq!(removed[0].id, 1);
+        assert_eq!(b.len(), 2);
     }
 
     #[test]

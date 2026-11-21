@@ -896,11 +896,6 @@ pub struct YinModel {
     pub notes: Box<[Arc<NoteBucket>; KEY_COUNT]>,
     pub note_count: u64,
     pub tick_length: u64,
-    /// 全曲最长音符长度（tick），只增不减：删除最长音符后保留旧值只会让
-    /// 视口查询左边界略偏左，绝不漏音符。保留给 `NoteSource::max_note_len`
-    /// 的默认实现/其他消费方；`YinModel` 自己的范围查询已改用块级
-    /// `NoteBucket::max_ends`，不再依赖这个全局值。
-    pub max_note_len: u32,
     /// Per-track note count cache (avoids scanning KEY_COUNT buckets for stats).
     pub track_note_count: Vec<u64>,
     /// Per-track audible note count (velocity > 1). `> 0` means the track
@@ -927,11 +922,6 @@ pub struct YinModel {
     /// Per-bucket note count cache for O(D) incremental stats in `rebuild_dirty()`.
     /// Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
     pub bucket_note_count: [u64; KEY_COUNT],
-
-    /// Per-bucket max end_tick cache. Enables correct incremental `tick_length`
-    /// in `rebuild_dirty()`: shrink-aware (max over all KEY_COUNT buckets) without
-    /// O(N) full scan. Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
-    pub bucket_max_end_tick: [u64; KEY_COUNT],
 
     /// Per-bucket per-track (total, audible) counts. Sparse: each bucket
     /// only stores tracks that actually have notes in it. Enables
@@ -974,14 +964,12 @@ impl Default for YinModel {
             notes: Box::new(core::array::from_fn(|_| Arc::new(NoteBucket::default()))),
             note_count: 0,
             tick_length: 0,
-            max_note_len: 0,
             track_note_count: Vec::new(),
             track_audible_count: Vec::new(),
             dirty_keys: [false; KEY_COUNT],
             note_revisions: [0; KEY_COUNT],
             lod: crate::lod::LodCache::default(),
             bucket_note_count: [0; KEY_COUNT],
-            bucket_max_end_tick: [0; KEY_COUNT],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
             next_note_id: 1,
             next_clip_id: 1,
