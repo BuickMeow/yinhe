@@ -2,7 +2,7 @@
 //!
 //! 用法：
 //! `cargo run --release -p yinhe-tests --example memory_probe -- summary <mid|yin>`
-//! `cargo run --release -p yinhe-tests --example memory_probe -- batch`
+//! `cargo run --release -p yinhe-tests --example memory_probe -- batch [base_count]`
 //! `cargo run --release -p yinhe-tests --example memory_probe -- cache`
 //!
 //! - summary：真实/合成工程的 GPU 原始层 + 8 档 LOD 摘要段数与显存估算。
@@ -333,7 +333,7 @@ fn main() {
         }
         Some("cache") => cache(),
         _ => {
-            eprintln!("用法: memory_probe <summary <mid|yin> | batch | cache>");
+            eprintln!("用法: memory_probe <summary <mid|yin> | batch [base_count] | cache>");
             std::process::exit(2);
         }
     }
