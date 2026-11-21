@@ -97,6 +97,11 @@ track     2
            = 16B
 ```
 
+- 这 1B padding **可以放一个 `key: u8`**：`#[repr(C)] struct UndoNote { id: u32, start: u32, end: u32, velocity: u8, key: u8, track: u16 }` 仍然是 16B。它只用于 undo 快照，不改变模型里的 `Note`；模型里的 key 仍然由桶号决定，避免两份真相。
+- `Vec` 不是 `Note` 的字段，是 Rust 的可增长数组（指针 + 长度 + 容量，64 位下自身 24B，元素在堆上）。`Vec<(Note, u8)>` 的意思是「元素类型为 `(Note, key)` 元组的动态数组」，20B 是元组的大小，不是 `Vec` 的大小。
+- 如果直接把 `key` 加进模型 `Note` 的 padding，`Note` 仍然 16B，但 key 会和桶号重复；跨 key 移动、加载、批量改写任何一处漏更新就会不一致。所以只在 undo 的 `UndoNote` 里这样做。
+- 想把整个 `Vec` 塞进 padding 是不可能的：`Vec` 头 24B，而 padding 只有 1B。
+
 - 1 亿音符 = 1.6GB；1.64 亿 = 2.62GB。
 - 16B 的记录密度是 4 个/64B cache line；Vec 分配通常 16B 对齐，顺序扫描不会额外跨线。
 - `track` 不能改 u8：`MAX_TRACKS = 65536`（`crates/yinhe-wgpu/src/vertex.rs`），u16 的完整定义域都在用。即便改 u8，4+4+4+1+1=14 对齐后仍是 16B，不省。
@@ -274,6 +279,7 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 |---|---|---|---|---|
 | `Vec<(Note,u8)>` | 20.00 | 20.00 | 2.2 ms / — | 21.4 ms / — |
 | `Vec<Note>`（按 key 分组） | 16.00 | 16.00 | 0.7 ms / — | 15.9 ms / — |
+| `Vec<UndoNote>`（key 放进 padding） | 16.00 | 16.00 | 未单独测，同 16B | 未单独测，同 16B |
 | 列式 delta | 7.87 | 7.87 | 5.4 / 5.8 ms | 51.9 / 58.1 ms |
 | 列式 + zstd1 | 5.20 | 4.72 | 12.1 / 8.4 ms | 213.9 / 92.9 ms |
 | 列式 + zstd3 | 4.37 | 3.99 | 49.3 / 11.5 ms | 496.4 / 114.5 ms |
@@ -281,7 +287,8 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
 
 结论：
 
-- **先做按 key 分组 16B**：20B → 16B，省 20%，无编码/解码成本，10M 拷贝还快 26%。这是最便宜的保底，不改变 undo 的同步语义。
+- **先做 16B `UndoNote`**：把 `key` 放进 `Note` 原有的 1B padding，`Vec<UndoNote>` 是 16B/音符，20B → 16B，省 20%，无编码/解码成本。它比「按 key 分组」更简单：保持 flat Vec，不需要分组结构；模型 `Note` 不变。
+- `Vec<Note>` 按 key 分组同样是 16B，效果等价；如果不想新增 `UndoNote` 结构，也可以走分组。
 - **列式 delta 是内存主选项**：7.87B/音符，省 61%；10M 编解码约 0.05s，外推 100M 约 0.5~0.6s。你已表示 1 秒可接受，移动端收益最大。
 - **zstd1 / zstd3 不适合提交路径**：10M 编码 214ms / 496ms，外推 100M 2.1s / 5s。解码尚可（93 / 115ms），但编码已经输了。
 - **lz4 也不占优**：压缩率 6.37B 不如 zstd1，编码 220ms 反而更慢，解码 38ms 很快。当前实现没有赢过「列式无压缩」。
@@ -290,7 +297,7 @@ const _: () = assert!(std::mem::size_of::<NoteInstance>() == 12);
   - 把 undo delta 落临时文件/内存映射，省 RAM 但引入 I/O，移动端不一定划算；
   - 历史预算（丢最老 undo），产品决策。
 
-本次建议：**先做 16B 分组建保底；列式 delta 作为 100M 的内存方案，1s 解码你已接受；不引入 zstd/lz4 到提交路径。** 实现前补一个 100M 的编解码 bench，确认外推误差和峰值内存。
+本次建议：**先做 16B `UndoNote`（key 放 padding）建保底；列式 delta 作为 100M 的内存方案，1s 解码你已接受；不引入 zstd/lz4 到提交路径。** 实现前补一个 100M 的编解码 bench，确认外推误差和峰值内存。
 
 ### 3.7 S3-6：接受 / 不修 / 移动端专项
 
@@ -455,6 +462,11 @@ fn remove_at(&mut self, start: u32, track: u16, id: u32) -> Option<Note>;
 5. `insert_sorted(note)` 放回（可能同块、跨块或触发块分裂）；只刷新目标块元数据。
 6. 统计增量：note_count / 每轨计数不变；`tick_length` 用块级 `max_ends` 的 max 更新（O(块数)）。
 7. 不调用 `sort()`、不调用 `rebuild_dirty()`。
+
+**左拉伸不能理解为「右拉伸再整体左移」来省成本。** 数学上 `[s, e]` 左拉伸 d 可以写成「右拉伸 d 到 `[s, e+d]`，再整体左移 d 回到 `[s-d, e]`」，区间结果一样；但数据结构的代价不在 end，而在 start：
+- 右拉伸只改 end，不动排序键，所以便宜（locate + 写 end + 刷 max_end）。
+- 整体左移会改 start，仍然要 remove + insert，和直接左拉伸一样贵，还多改一次 end。
+- 所以最优路线就是直接改 start、end 不动、单点重定位；不要绕「先右拉伸再左移」。
 
 原型实测 10M 43.4µs（无 COW），1M 39.1µs；真实编辑若音频持有快照，多一次 ≤1MB 块复制，预计 ~100µs，仍是 169ms 的 1/1700。
 
@@ -623,7 +635,7 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 4. **批量插入时间可接受，但峰值内存未测**：10M 桶插 10 万音符 35.5 ms；`insert_batch_sorted` 的 2× 峰值仍需单独用 memtrace 验证。
 5. **undo 压缩的初步结论**：
    - 当前 `Vec<(Note,u8)>`：20B/音符（16B Note + key + 3B 对齐 pad）。
-   - 按 key 分组 `Vec<Note>`：16B/音符，10M 拷贝 15.9 ms（20B 是 21.4 ms），无编码/解码成本，是最便宜的 -20%。
+   - 16B 方案：`Vec<UndoNote>`（key 放进 Note 原有 padding）或按 key 分组的 `Vec<Note>`；10M 拷贝 15.9 ms（20B 是 21.4 ms），无编码/解码成本，是最便宜的 -20%。优先 `UndoNote`，保持 flat Vec 更简单。
    - 列式 delta：7.87 B/音符（-61%），10M 编码 51.9 ms、解码 58.1 ms；外推 100M 约 0.5 s / 0.6 s。
    - zstd1：4.72 B/音符，10M 编码 213.9 ms、解码 92.9 ms；外推 100M 约 2.1 s / 0.9 s，提交时仍偏慢。
    - zstd3：3.99 B/音符，但 10M 编码 496.4 ms、解码 114.5 ms；外推 100M 编码约 5 s，**不适合在编辑提交时做**。
@@ -660,7 +672,7 @@ fn apply_note_stat_delta(&mut self, key: u8, before: Option<&Note>, after: Optio
 | M4 | 复跑 bench 对比，确认目标；清理旧单点 by-id API | M3 | 0.5 天 |
 | M5 | S3-1 注释/断言；关闭 LOD 时跳过摘要构建/上传；S3-4 `insert_batch_sorted` 流式归并 | 可与 M1~M4 并行 | 1~1.5 天 |
 | M6 | S3-2/S3-3：8 档仍全量常驻，只做逐档构建/上传峰值优化和逐 key 重建评估 | M5 | 先测后估 |
-| M7 | S3-5 undo delta：先补 100M 编解码 bench；通过后先做 16B 分组，再评估列式 7.87B | M0 数据 | 待定 |
+| M7 | S3-5 undo delta：先补 100M 编解码 bench；通过后先做 16B `UndoNote`，再评估列式 7.87B | M0 数据 | 待定 |
 | M8 | 移动端专项：`NoteLayerCache` 窗口外桶释放、`LayerSlot` 缩容（先测后做） | M0 数据 | 待定 |
 
 P0（M1~M4）先合入，再碰内存结构。不要一边改音符布局一边改写路径，出问题无法定位。
