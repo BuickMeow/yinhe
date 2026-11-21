@@ -61,6 +61,10 @@ impl YinModel {
     pub fn mark_dirty(&mut self, key: u8) {
         self.dirty_keys[key as usize] = true;
         self.note_revisions[key as usize] = self.note_revisions[key as usize].wrapping_add(1);
+        // 脏桶在 rebuild_dirty 之前也可能被查询（例如并发的只读快照），
+        // 此时把该 key 的回看宽度设为未知（全范围），保证不漏音符；
+        // rebuild_dirty 会重新扫描该桶并写回精确值。
+        self.max_note_len_by_key[key as usize] = u32::MAX;
     }
 
     /// Rebuild all derived data from scratch.
@@ -257,7 +261,7 @@ impl YinModel {
                 key_max_len = key_max_len.max(len);
                 self.max_note_len = self.max_note_len.max(len);
             }
-            self.max_note_len_by_key[k] = self.max_note_len_by_key[k].max(key_max_len);
+            self.max_note_len_by_key[k] = key_max_len;
             self.bucket_max_end_tick[k] = bucket_max;
         }
         self.note_count = (self.note_count as i64 + delta_note_count) as u64;

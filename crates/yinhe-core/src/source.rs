@@ -99,6 +99,9 @@ mod tests {
             },
         );
         model.insert_note(61, note(2, 5_000));
+        // 脏桶在 rebuild 前按未知处理，保证并发只读查询不漏。
+        assert_eq!(model.max_note_len_by_key[60], u32::MAX);
+        assert_eq!(model.max_note_len_by_key[61], u32::MAX);
         model.rebuild_dirty();
 
         assert_eq!(model.max_note_len_by_key[60], 100_000);
