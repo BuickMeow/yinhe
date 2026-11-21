@@ -128,21 +128,14 @@ pub extern "C" fn yinhe_overlay_json() -> *mut std::ffi::c_char {
     to_c_string(scene::overlay_json())
 }
 
-/// Flutter 帧驱动：请求渲染一帧并同步等待 present 完成（纹理与浮层同帧产出）。
+/// Flutter 帧驱动：只投递渲染请求，不等待 present。
 ///
-/// 返回 1 表示本帧已完成 present，0 表示发送失败或被合并/超时。
+/// 返回 1 表示请求已投递，0 表示渲染线程不可用。UI 线程不再被 GPU/交换链
+/// 阻塞；慢帧只表现为纹理更新变慢，不再冻结输入。
 #[unsafe(no_mangle)]
 pub extern "C" fn yinhe_render_frame() -> i32 {
-    let (done, wait) = std::sync::mpsc::sync_channel::<()>(1);
-    if cmd_tx().send(Cmd::RenderNow(done)).is_err() {
+    if cmd_tx().send(Cmd::RenderNow).is_err() {
         return 0;
     }
-    // 同步等待：Flutter 的 paint/raster 因此一定发生在 present 之后，纹理与浮层
-    // 对应同一份 Rust 状态，不再依赖各平台（Android ImageReader / iOS
-    // copyPixelBuffer / OHOS 外接纹理）各自的合成时序。
-    // 超时是兜底：surface 重建或 GPU 驱动异常时不能让 UI 线程永久阻塞。
-    match wait.recv_timeout(std::time::Duration::from_millis(500)) {
-        Ok(()) => 1,
-        Err(_) => 0,
-    }
+    1
 }

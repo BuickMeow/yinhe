@@ -130,8 +130,8 @@ enum Cmd {
     /// iOS：登记一个外部纹理呈现端（0 = 主画布，1 = AM 面板）。
     #[cfg(target_os = "ios")]
     EnsureExternal(i32),
-    /// Flutter 帧驱动：渲染一帧，present 完成后通过 `done` 回信。
-    RenderNow(std::sync::mpsc::SyncSender<()>),
+    /// Flutter 帧驱动：请求渲染一帧。UI 线程不等待 present。
+    RenderNow,
 }
 
 static CMD_TX: OnceLock<Sender<Cmd>> = OnceLock::new();
@@ -385,21 +385,22 @@ fn render_thread_main(rx: Receiver<Cmd>) {
     let mut target: Option<render::Target> = None;
     let mut am_target: Option<render::AmTarget> = None;
 
-    // 帧驱动：由 Flutter 每帧请求渲染并同步等待，纹理与浮层同帧产出。
+    // 帧驱动：Flutter 只投递渲染请求，不等待 present；渲染线程按自己的
+    // 节奏合并请求并出帧。UI 不再被 GPU/交换链阻塞（没有 500ms 魔法超时）。
     while let Ok(first) = rx.recv() {
         // 1) 处理积压命令（取最终态）；合并本轮的渲染请求。
-        let mut need_render: Option<std::sync::mpsc::SyncSender<()>> = None;
+        let mut need_render = false;
         let mut cmd = Some(first);
         while let Some(c) = cmd {
             match c {
-                Cmd::RenderNow(done) => need_render = Some(done),
+                Cmd::RenderNow => need_render = true,
                 other => apply_cmd(&mut gpu, &mut target, &mut am_target, other),
             }
             cmd = rx.try_recv().ok();
         }
 
-        // 2) 有请求则渲染一帧（含 present）；完成后回信，UI 线程才继续 paint。
-        if let Some(done) = need_render {
+        // 2) 有请求则渲染一帧（含 present）。
+        if need_render {
             if let (Some(g), Some(t)) = (&gpu, &mut target) {
                 render::render_frame(g, t);
             }
@@ -407,7 +408,6 @@ fn render_thread_main(rx: Receiver<Cmd>) {
             if let (Some(g), Some(am)) = (&gpu, &mut am_target) {
                 render::render_automation_frame(g, am, summary);
             }
-            let _ = done.send(());
         }
     }
     log::info!("渲染线程退出");
@@ -479,7 +479,7 @@ fn apply_cmd(
                 *am_target = render::create_external_automation_target(g, 1);
             }
         }
-        Cmd::RenderNow(_) => {
+        Cmd::RenderNow => {
             // 渲染请求由渲染循环统一处理（这里不应到达）。
         }
     }
