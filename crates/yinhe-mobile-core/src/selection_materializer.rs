@@ -41,6 +41,25 @@ struct CachedDrag {
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 static RESULT: OnceLock<Mutex<Option<Pending>>> = OnceLock::new();
 static DRAG: OnceLock<Mutex<Option<CachedDrag>>> = OnceLock::new();
+/// 正在后台构建 ghost 的 generation（`NO_IN_FLIGHT` = 空闲）。
+///
+/// 同一选区连续按下时只允许一份全量 `collect` 在跑；否则每份 `by_key`
+/// 都是 12B/选中音符，亿级选区会并发出多份 GB 级内存。
+const NO_IN_FLIGHT: u64 = u64::MAX;
+static DRAG_IN_FLIGHT: AtomicU64 = AtomicU64::new(NO_IN_FLIGHT);
+
+struct InFlightGuard(u64);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        let _ = DRAG_IN_FLIGHT.compare_exchange(
+            self.0,
+            NO_IN_FLIGHT,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        );
+    }
+}
 
 fn result_slot() -> &'static Mutex<Option<Pending>> {
     RESULT.get_or_init(|| Mutex::new(None))
@@ -53,9 +72,9 @@ fn drag_slot() -> &'static Mutex<Option<CachedDrag>> {
 /// 历史操作（undo/redo）或选区被替换前作废尚未应用的结果，避免旧数据覆盖新状态。
 pub fn invalidate() {
     GENERATION.fetch_add(1, Ordering::Relaxed);
-    if let Ok(mut slot) = drag_slot().lock() {
-        *slot = None;
-    }
+    // 大选区 ghost 可能有数百 MB～GB：先 take 出来，在锁外析构。
+    let stale = drag_slot().lock().ok().and_then(|mut slot| slot.take());
+    drop(stale);
 }
 
 /// 安排异步物化当前矩形选区的成员位图。重复调用会让旧任务的结果作废。
@@ -67,9 +86,8 @@ pub fn schedule(s: &RenderScene) {
         return;
     }
     // 选区已变：上一份 ghost 数据不再适用，顺手释放（可能有几百 MB）。
-    if let Ok(mut slot) = drag_slot().lock() {
-        *slot = None;
-    }
+    let stale = drag_slot().lock().ok().and_then(|mut slot| slot.take());
+    drop(stale);
     let selection = doc.edit.selected.clone();
     let rects = selection.rects.clone();
     let filter = selection.filter.clone();
@@ -110,7 +128,12 @@ pub fn schedule_drag(s: &RenderScene) {
     let model = doc.data.model.clone();
     let revision = doc.data.revision;
     let generation = GENERATION.load(Ordering::Relaxed);
+    if DRAG_IN_FLIGHT.load(Ordering::Relaxed) == generation {
+        return;
+    }
+    DRAG_IN_FLIGHT.store(generation, Ordering::Relaxed);
     std::thread::spawn(move || {
+        let _in_flight = InFlightGuard(generation);
         // 选区还没物化成成员位图时，先在后台补物化再收集；全部在子线程完成。
         let selection = if selection.has_explicit_members() {
             selection
@@ -126,7 +149,8 @@ pub fn schedule_drag(s: &RenderScene) {
         if GENERATION.load(Ordering::Relaxed) != generation {
             return;
         }
-        if let Ok(mut slot) = drag_slot().lock() {
+        let stale = if let Ok(mut slot) = drag_slot().lock() {
+            let stale = slot.take();
             *slot = Some(CachedDrag {
                 generation,
                 revision,
@@ -137,7 +161,11 @@ pub fn schedule_drag(s: &RenderScene) {
                     hidden: Arc::new(hidden),
                 }),
             });
-        }
+            stale
+        } else {
+            None
+        };
+        drop(stale);
     });
 }
 

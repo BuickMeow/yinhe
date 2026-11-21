@@ -911,6 +911,10 @@ pub fn end(x: f32, y: f32) {
     } else {
         None
     };
+    // 选区的 by_key/hidden 可能达 GB 级：先摘出来，解锁后再释放，
+    // 避免在 DRAG/SCENE 锁内做大规模析构。
+    let stale_drag = d.drag.take();
+    let stale_hidden = d.drag_hidden.take();
     d.kind = kind::NONE;
     s.preview.clear();
     s.clear_preview_anim();
@@ -923,6 +927,8 @@ pub fn end(x: f32, y: f32) {
     bump(&mut s);
     drop(s);
     drop(d);
+    drop(stale_drag);
+    drop(stale_hidden);
     if !keep_gate {
         crate::audio::stop_preview();
     }
@@ -948,6 +954,8 @@ pub fn cancel() {
         return;
     }
     d.kind = kind::NONE;
+    let stale_drag = d.drag.take();
+    let stale_hidden = d.drag_hidden.take();
     drop(d);
     if let Ok(mut s) = scene::scene().lock() {
         s.preview.clear();
@@ -956,6 +964,8 @@ pub fn cancel() {
         bump(&mut s);
     }
     crate::audio::stop_preview();
+    drop(stale_drag);
+    drop(stale_hidden);
 }
 
 // ── PR 起始分发 ──
