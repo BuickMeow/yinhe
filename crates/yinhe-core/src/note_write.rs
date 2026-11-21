@@ -33,6 +33,65 @@ impl YinModel {
         Some(updated)
     }
 
+    /// 按 `(start_tick, track, id)` 单点更新。start 改变时只搬移该音符，
+    /// 不做全桶 sort；统计用 O(1) 增量更新，不触发 `rebuild_dirty()`。
+    /// 返回 `(before, after)`。
+    pub fn update_note_at(
+        &mut self,
+        key: u8,
+        start: u32,
+        track: u16,
+        id: u32,
+        f: impl FnOnce(&mut Note),
+    ) -> Option<(Note, Note)> {
+        let (before, after) =
+            Arc::make_mut(&mut self.notes[key as usize]).update_at(start, track, id, f)?;
+        self.apply_note_stat_delta(Some((key, &before)), Some((key, &after)));
+        self.note_revisions[key as usize] = self.note_revisions[key as usize].wrapping_add(1);
+        Some((before, after))
+    }
+
+    /// 按 `(start_tick, track, id)` 单点删除。只重算受影响块，统计增量更新。
+    pub fn remove_note_at(&mut self, key: u8, start: u32, track: u16, id: u32) -> Option<Note> {
+        let removed = Arc::make_mut(&mut self.notes[key as usize]).remove_at(start, track, id)?;
+        self.apply_note_stat_delta(Some((key, &removed)), None);
+        self.note_revisions[key as usize] = self.note_revisions[key as usize].wrapping_add(1);
+        Some(removed)
+    }
+
+    /// 按 `(旧 start, track, id)` 把音符移到 `(new_key, new_start_tick)`；
+    /// 保留 id 与 gate。返回 `(before, after)`。
+    pub fn move_note_at(
+        &mut self,
+        old_key: u8,
+        start: u32,
+        track: u16,
+        id: u32,
+        new_key: u8,
+        new_start_tick: u32,
+    ) -> Option<(Note, Note)> {
+        let before = {
+            let bucket = Arc::make_mut(&mut self.notes[old_key as usize]);
+            bucket.remove_at(start, track, id)?
+        };
+        let gate = before.end_tick.saturating_sub(before.start_tick);
+        let new_start = new_start_tick.min(u32::MAX - 1);
+        let after = Note {
+            start_tick: new_start,
+            end_tick: new_start.saturating_add(gate),
+            ..before
+        };
+        Arc::make_mut(&mut self.notes[new_key as usize]).insert_sorted(after);
+        self.apply_note_stat_delta(Some((old_key, &before)), Some((new_key, &after)));
+        self.note_revisions[old_key as usize] =
+            self.note_revisions[old_key as usize].wrapping_add(1);
+        if new_key != old_key {
+            self.note_revisions[new_key as usize] =
+                self.note_revisions[new_key as usize].wrapping_add(1);
+        }
+        Some((before, after))
+    }
+
     /// 桶内按 id 移除（内部 `mark_dirty`）。
     pub fn remove_note_by_id(&mut self, key: u8, id: u32) -> Option<Note> {
         let bucket = Arc::make_mut(&mut self.notes[key as usize]);
@@ -45,6 +104,13 @@ impl YinModel {
     pub fn insert_note(&mut self, key: u8, note: Note) {
         Arc::make_mut(&mut self.notes[key as usize]).insert_sorted(note);
         self.mark_dirty(key);
+    }
+
+    /// 单音符插入：保序插入 + O(1) 统计增量，不置 dirty、不扫桶。
+    pub fn insert_note_at(&mut self, key: u8, note: Note) {
+        Arc::make_mut(&mut self.notes[key as usize]).insert_sorted(note);
+        self.apply_note_stat_delta(None, Some((key, &note)));
+        self.note_revisions[key as usize] = self.note_revisions[key as usize].wrapping_add(1);
     }
 
     /// 按 id 把音符移到 `(new_key, new_start_tick)`（保留 id 与 **gate**）。
@@ -148,5 +214,58 @@ mod tests {
         assert!(m.notes[64].is_sorted());
 
         assert!(m.move_note(60, 1, 64, 0).is_none(), "旧桶找不到 id");
+    }
+
+    /// `*_at` 单点路径：统计 O(1) 增量，不置 dirty，不触发全桶重扫。
+    #[test]
+    fn single_note_at_updates_stats_without_dirty() {
+        let mut m = model();
+        m.insert_note(60, note(1, 100, 200));
+        m.insert_note(60, note(2, 300, 400));
+        m.rebuild();
+        m.dirty_keys = [false; yinhe_types::KEY_COUNT];
+        assert_eq!(m.note_count, 2);
+        assert_eq!(m.track_audible_count[0], 2);
+        assert_eq!(m.tick_length, 400);
+
+        let rev = m.note_revisions[60];
+        m.update_note_at(60, 100, 0, 1, |n| n.velocity = 1)
+            .expect("velocity 更新");
+        assert_eq!(m.note_count, 2);
+        assert_eq!(m.track_note_count[0], 2);
+        assert_eq!(m.track_audible_count[0], 1);
+        assert!(!m.dirty_keys[60], "单点编辑不应置 dirty");
+        assert!(m.note_revisions[60] > rev, "GPU revision 应推进");
+
+        m.update_note_at(60, 100, 0, 1, |n| n.end_tick = 1000)
+            .expect("end 更新");
+        assert_eq!(m.tick_length, 1000);
+
+        let removed = m.remove_note_at(60, 100, 0, 1).expect("删除");
+        assert_eq!(removed.id, 1);
+        assert_eq!(m.note_count, 1);
+        assert_eq!(m.bucket_note_count[60], 1);
+        assert_eq!(m.tick_length, 400);
+        assert!(!m.dirty_keys[60]);
+
+        let (before, after) = m.move_note_at(60, 300, 0, 2, 64, 500).expect("跨 key 移动");
+        assert_eq!((before.start_tick, before.end_tick), (300, 400));
+        assert_eq!((after.start_tick, after.end_tick), (500, 600));
+        assert_eq!(m.notes[60].len(), 0);
+        assert_eq!(m.notes[64].len(), 1);
+        assert_eq!(m.bucket_note_count[60], 0);
+        assert_eq!(m.bucket_note_count[64], 1);
+        assert_eq!(m.tick_length, 600);
+        assert!(!m.dirty_keys[60] && !m.dirty_keys[64]);
+    }
+
+    #[test]
+    fn try_alloc_note_id_stops_at_max() {
+        let mut m = model();
+        m.next_note_id = u32::MAX - 1;
+        assert_eq!(m.try_alloc_note_id(), Some(u32::MAX - 1));
+        assert_eq!(m.next_note_id, u32::MAX);
+        assert_eq!(m.try_alloc_note_id(), None);
+        assert_eq!(m.next_note_id, u32::MAX, "失败时不得回绕");
     }
 }

@@ -54,12 +54,16 @@ impl Document {
                         }
                     }
                     let model = Arc::make_mut(&mut self.data.model);
-                    let Some((before, moved)) =
-                        model.move_note(*key, orig_note.id, new_key, new_tick)
-                    else {
+                    let Some((before, moved)) = model.move_note_at(
+                        *key,
+                        orig_note.start_tick,
+                        orig_note.track,
+                        orig_note.id,
+                        new_key,
+                        new_tick,
+                    ) else {
                         return None; // 刚定位到，理论不可达（防御，不 panic）
                     };
-                    model.rebuild_dirty();
                     self.data.bump_revision();
                     return Some(UndoAction::Notes(NoteDelta {
                         before: vec![(before, *key)],
@@ -96,10 +100,13 @@ impl Document {
                         }
                     }
                     let model = Arc::make_mut(&mut self.data.model);
-                    let after = model.update_note_by_id(*key, before.id, |n| {
-                        n.end_tick = (*new_end_tick).max(n.start_tick + 1);
-                    })?;
-                    model.rebuild_dirty();
+                    let (_, after) = model.update_note_at(
+                        *key,
+                        before.start_tick,
+                        before.track,
+                        before.id,
+                        |n| n.end_tick = (*new_end_tick).max(n.start_tick + 1),
+                    )?;
                     self.data.bump_revision();
                     let gate = after.end_tick - after.start_tick;
                     self.edit
@@ -139,11 +146,14 @@ impl Document {
                         }
                     }
                     let model = Arc::make_mut(&mut self.data.model);
-                    // start_tick 是排序键：内部 `update_note_by_id` 会 sort 兜底。
-                    let after = model.update_note_by_id(*key, before.id, |n| {
-                        n.start_tick = (*new_start_tick).min(n.end_tick - 1);
-                    })?;
-                    model.rebuild_dirty();
+                    // start_tick 是排序键：update_note_at 内部只搬移该音符。
+                    let (_, after) = model.update_note_at(
+                        *key,
+                        before.start_tick,
+                        before.track,
+                        before.id,
+                        |n| n.start_tick = (*new_start_tick).min(n.end_tick - 1),
+                    )?;
                     self.data.bump_revision();
                     let gate = after.end_tick - after.start_tick;
                     // 左拉伸后 start_tick 变早，用原 start_tick 做“最晚时间”比较，避免越拉越早导致不记忆
@@ -185,7 +195,7 @@ impl Document {
     /// 和 velocity 未变化的条目会被跳过；全部被跳过时返回 `None`。
     pub fn set_notes_velocity(&mut self, edits: &[VelocityEdit]) -> Option<UndoAction> {
         // 先定位目标音符并记录原值（只读，按 start_tick 二分）。
-        let mut targets: Vec<(u8, u32, u8, u8)> = Vec::new(); // (key, id, old_vel, new_vel)
+        let mut targets: Vec<(u8, u32, u16, u32, u8)> = Vec::new(); // (key, start, track, id, new_vel)
         // 实际命中的 (track, start_tick, new_vel)：用于记录"最近修改力度"。
         let mut remembered: Vec<(u16, u32, u8)> = Vec::new();
         {
@@ -197,7 +207,7 @@ impl Document {
                 if let Some(n) = note
                     && n.velocity != e.velocity
                 {
-                    targets.push((e.key, n.id, n.velocity, e.velocity));
+                    targets.push((e.key, e.start_tick, e.track, n.id, e.velocity));
                     remembered.push((e.track, e.start_tick, e.velocity));
                 }
             }
@@ -208,24 +218,19 @@ impl Document {
         let model = Arc::make_mut(&mut self.data.model);
         let mut before = Vec::with_capacity(targets.len());
         let mut after = Vec::with_capacity(targets.len());
-        for (key, id, old_vel, new_vel) in targets {
+        for (key, start_tick, track, id, new_vel) in targets {
             // 收集阶段与修改阶段之间无并发修改，目标必然存在（防御跳过，不 panic）。
-            let Some(updated) = model.update_note_by_id(key, id, |n| n.velocity = new_vel) else {
+            let Some((old, updated)) =
+                model.update_note_at(key, start_tick, track, id, |n| n.velocity = new_vel)
+            else {
                 continue;
             };
-            before.push((
-                yinhe_types::Note {
-                    velocity: old_vel,
-                    ..updated
-                },
-                key,
-            ));
+            before.push((old, key));
             after.push((updated, key));
         }
         if before.is_empty() {
             return None;
         }
-        model.rebuild_dirty();
         self.data.bump_revision();
         // 记录"最近修改力度"：新音符默认力度跟随最近一次修改（同轨取时间最晚的音符）。
         for (track, start_tick, velocity) in remembered {

@@ -732,7 +732,7 @@ pub fn event_update(json: &str, value: f64, gate: f64) -> i32 {
             if let Some(a) = doc.set_note_velocity(track as u16, tick, key, vel) {
                 actions.push(a);
             }
-            if let Some(a) = doc.set_note_end_tick(key, id, end) {
+            if let Some(a) = doc.set_note_end_tick(key, tick, track as u16, id, end) {
                 actions.push(a);
             }
         }

@@ -55,6 +55,89 @@ impl YinModel {
         id
     }
 
+    /// 带上限检查的 id 分配。到 `u32::MAX` 返回 `None`，不再回绕。
+    pub fn try_alloc_note_id(&mut self) -> Option<u32> {
+        let id = self.next_note_id;
+        if id == u32::MAX {
+            return None;
+        }
+        self.next_note_id = id.checked_add(1)?;
+        Some(id)
+    }
+
+    /// 单音符编辑的统计增量：用 before/after 直接更新计数与 tick_length，
+    /// 不扫描桶、不设置 `dirty_keys`、不触发 `rebuild_dirty()`。
+    ///
+    /// `before` / `after` 必须是模型里真实存在的旧/新状态；调用方负责在
+    /// bucket 已经改完后调用。跨 key 移动时两个参数可以带不同的 key。
+    pub fn apply_note_stat_delta(
+        &mut self,
+        before: Option<(u8, &yinhe_types::Note)>,
+        after: Option<(u8, &yinhe_types::Note)>,
+    ) {
+        let prev_tick_length = self.tick_length;
+
+        if let Some((key, n)) = before {
+            let k = key as usize;
+            self.note_count = self.note_count.saturating_sub(1);
+            self.bucket_note_count[k] = self.bucket_note_count[k].saturating_sub(1);
+            let remove_entry = if let Some(e) = self.bucket_track_stats[k].get_mut(&n.track) {
+                e.0 = e.0.saturating_sub(1);
+                if n.velocity > 1 {
+                    e.1 = e.1.saturating_sub(1);
+                }
+                e.0 == 0
+            } else {
+                false
+            };
+            if remove_entry {
+                self.bucket_track_stats[k].remove(&n.track);
+            }
+            if let Some(t) = self.track_note_count.get_mut(n.track as usize) {
+                *t = t.saturating_sub(1);
+            }
+            if n.velocity > 1
+                && let Some(a) = self.track_audible_count.get_mut(n.track as usize)
+            {
+                *a = a.saturating_sub(1);
+            }
+        }
+
+        if let Some((key, n)) = after {
+            let k = key as usize;
+            self.note_count = self.note_count.saturating_add(1);
+            self.bucket_note_count[k] = self.bucket_note_count[k].saturating_add(1);
+            let e = self.bucket_track_stats[k].entry(n.track).or_insert((0, 0));
+            e.0 = e.0.saturating_add(1);
+            if n.velocity > 1 {
+                e.1 = e.1.saturating_add(1);
+            }
+            if let Some(t) = self.track_note_count.get_mut(n.track as usize) {
+                *t = t.saturating_add(1);
+            }
+            if n.velocity > 1
+                && let Some(a) = self.track_audible_count.get_mut(n.track as usize)
+            {
+                *a = a.saturating_add(1);
+            }
+        }
+
+        // tick_length 只可能因「移除了当前最大值」或「新增了更大的 end」变化。
+        let removed_max = before.is_some_and(|(_, n)| n.end_tick as u64 >= prev_tick_length);
+        let added_max = after.is_some_and(|(_, n)| n.end_tick as u64 > prev_tick_length);
+        if removed_max || added_max {
+            self.tick_length = self
+                .notes
+                .iter()
+                .map(|b| b.max_end_tick() as u64)
+                .max()
+                .unwrap_or(0);
+            if self.tick_length != prev_tick_length {
+                self.tempo_map = Arc::new(self.build_tempo_map());
+            }
+        }
+    }
+
     /// Mark a bucket as dirty (modified and needs sorting).
     /// Call this before or after modifying `self.notes[key]`.
     /// Also bumps `note_revisions[key]` for incremental GPU upload tracking.

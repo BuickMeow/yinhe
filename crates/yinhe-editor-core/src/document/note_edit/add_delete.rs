@@ -33,7 +33,7 @@ impl Document {
         }
         let typed_note = {
             let model = Arc::make_mut(&mut self.data.model);
-            let id = model.alloc_note_id();
+            let id = model.try_alloc_note_id()?;
             yinhe_types::Note {
                 id,
                 start_tick: note.start_tick,
@@ -42,9 +42,9 @@ impl Document {
                 track: track_idx,
             }
         };
-        Arc::make_mut(&mut self.data.model).insert_note(key, typed_note);
+        Arc::make_mut(&mut self.data.model).insert_note_at(key, typed_note);
         let clip_action = self.ensure_clips_for_notes(track_idx, std::slice::from_ref(&note));
-        self.data.rebuild_model_dirty();
+        self.data.bump_revision();
         let note_action = UndoAction::Notes(NoteDelta {
             before: vec![],
             after: vec![(typed_note, key)],
@@ -57,23 +57,31 @@ impl Document {
 
     /// 修改指定音符的 `end_tick`（MIDI 录音 NoteOff 时闭合 gate）。
     ///
-    /// 按 (key, note_id) 寻址；音符不存在返回 `None`。
+    /// 按 `(key, start_tick, track, note_id)` 寻址；音符不存在返回 `None`。
     /// 新 end_tick 会被钳制为至少 `start_tick + 1`（保证 gate >= 1 tick）。
     pub fn set_note_end_tick(
         &mut self,
         key: u8,
+        start_tick: u32,
+        track: u16,
         note_id: u32,
         end_tick: u32,
     ) -> Option<UndoAction> {
-        let orig = *self.data.model.note_by_id(key, note_id)?;
+        let orig = *self.data.model.notes[key as usize]
+            .range(start_tick, start_tick.saturating_add(1))
+            .find(|n| n.track == track && n.id == note_id)?;
         let new_end = end_tick.max(orig.start_tick + 1);
         if orig.end_tick == new_end {
             return None;
         }
-        let new_note =
-            Arc::make_mut(&mut self.data.model)
-                .update_note_by_id(key, note_id, |n| n.end_tick = new_end)?;
-        self.data.rebuild_model_dirty();
+        let (_, new_note) = Arc::make_mut(&mut self.data.model).update_note_at(
+            key,
+            start_tick,
+            track,
+            note_id,
+            |n| n.end_tick = new_end,
+        )?;
+        self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta {
             before: vec![(orig, key)],
             after: vec![(new_note, key)],
@@ -92,8 +100,7 @@ impl Document {
             .range(start_tick, start_tick.saturating_add(1))
             .find(|n| n.track == track && n.start_tick == start_tick)?;
         let model = Arc::make_mut(&mut self.data.model);
-        let removed = model.remove_note_by_id(key, note.id)?;
-        model.rebuild_dirty();
+        let removed = model.remove_note_at(key, note.start_tick, note.track, note.id)?;
         self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta {
             before: vec![(removed, key)],
@@ -113,9 +120,9 @@ impl Document {
             let found = model.notes[key as usize]
                 .range(start_tick, start_tick.saturating_add(1))
                 .find(|n| n.track == track && n.start_tick == start_tick)
-                .map(|n| n.id);
-            if let Some(id) = found
-                && let Some(r) = model.remove_note_by_id(key, id)
+                .map(|n| (n.start_tick, n.track, n.id));
+            if let Some((start, track, id)) = found
+                && let Some(r) = model.remove_note_at(key, start, track, id)
             {
                 removed.push((r, key));
             }
@@ -123,7 +130,6 @@ impl Document {
         if removed.is_empty() {
             return None;
         }
-        model.rebuild_dirty();
         self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta {
             before: removed,

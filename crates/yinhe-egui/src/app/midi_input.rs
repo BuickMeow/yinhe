@@ -35,6 +35,8 @@ pub(crate) struct RecordingState {
 /// 录音中按住的音符（待 NoteOff 闭合 gate）。
 pub(crate) struct PendingRecordingNote {
     pub key: u8,
+    pub start_tick: u32,
+    pub track: u16,
     pub note_id: u32,
 }
 
@@ -105,9 +107,13 @@ impl App {
             let end_secs = state.start_secs + state.started_at.elapsed().as_secs_f64();
             let end_tick = self.tick_at_secs(end_secs, idx);
             for p in state.pending.values() {
-                if let Some(a) =
-                    self.workspace.documents[idx].set_note_end_tick(p.key, p.note_id, end_tick)
-                {
+                if let Some(a) = self.workspace.documents[idx].set_note_end_tick(
+                    p.key,
+                    p.start_tick,
+                    p.track,
+                    p.note_id,
+                    end_tick,
+                ) {
                     undo_actions.push(a);
                 }
             }
@@ -212,16 +218,25 @@ impl App {
         let Some(action) = action else {
             return;
         };
-        let note_id = match &action {
-            UndoAction::Notes(d) => d.after[0].0.id,
+        let (note_id, start_tick, track) = match &action {
+            UndoAction::Notes(d) => {
+                let n = &d.after[0].0;
+                (n.id, n.start_tick, n.track)
+            }
             _ => return,
         };
         let Some(state) = &mut self.recording else {
             return;
         };
-        state
-            .pending
-            .insert(key, PendingRecordingNote { key, note_id });
+        state.pending.insert(
+            key,
+            PendingRecordingNote {
+                key,
+                start_tick,
+                track,
+                note_id,
+            },
+        );
         state.undo_actions.push(action);
         let doc = &mut self.workspace.documents[idx];
         doc.data.bump_revision();
@@ -251,7 +266,13 @@ impl App {
             return;
         };
         let end_tick = self.tick_at_secs(end_secs, idx);
-        let action = self.workspace.documents[idx].set_note_end_tick(p.key, p.note_id, end_tick);
+        let action = self.workspace.documents[idx].set_note_end_tick(
+            p.key,
+            p.start_tick,
+            p.track,
+            p.note_id,
+            end_tick,
+        );
         if let Some(a) = action
             && let Some(state) = &mut self.recording
         {
