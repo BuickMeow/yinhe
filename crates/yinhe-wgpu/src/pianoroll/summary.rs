@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use rayon::prelude::*;
-use yinhe_types::KEY_COUNT;
+use yinhe_types::{KEY_COUNT, NoteSource};
 
 use crate::vertex::NoteInstance;
 /// 摘要档位（tick 块宽），由大到小，取 2 的幂，最细 16。
@@ -91,6 +91,78 @@ pub fn build_key_summary(key: u8, notes: &[NoteInstance], block_ticks: u32) -> V
     out
 }
 
+/// 直接从音符源构建摘要，跳过「先构造全部原始 NoteInstance 再排序」。
+///
+/// 小 ppu 时原始实例只用于聚合，构造/排序它们是纯多余步骤。
+pub fn build_key_summary_in_range(
+    midi: &dyn NoteSource,
+    key: u8,
+    tick_start: u32,
+    tick_end: u32,
+    block_ticks: u32,
+    track_visible: &[bool],
+    hidden_notes: &dyn yinhe_types::HiddenFilter,
+) -> Vec<NoteInstance> {
+    let block_ticks = block_ticks.max(1);
+    let mut out = Vec::new();
+    let mut counts: HashMap<u16, u32> = HashMap::new();
+    let mut state: Option<(u32, u32, u32, u8)> = None; // (block, min_s, max_e, max_vel)
+    for note in midi.key_notes_in_range(key, tick_start, tick_end) {
+        if note.start_tick > tick_end {
+            break;
+        }
+        if note.end_tick < tick_start {
+            continue;
+        }
+        if !track_visible
+            .get(note.track as usize)
+            .copied()
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        if hidden_notes.is_hidden(note, key) {
+            continue;
+        }
+        let block = note.start_tick / block_ticks;
+        match state {
+            Some((b, min_s, max_e, max_vel)) if b == block => {
+                state = Some((
+                    b,
+                    min_s.min(note.start_tick),
+                    max_e.max(note.end_tick),
+                    max_vel.max(note.velocity),
+                ));
+                *counts.entry(note.track).or_insert(0) += 1;
+            }
+            Some((b, min_s, max_e, max_vel)) => {
+                out.push(NoteInstance {
+                    start_tick: min_s,
+                    end_tick: max_e,
+                    packed: NoteInstance::pack(key, dominant_track(&counts), max_vel),
+                });
+                counts.clear();
+                counts.insert(note.track, 1);
+                state = Some((block, note.start_tick, note.end_tick, note.velocity));
+                let _ = b;
+            }
+            None => {
+                counts.clear();
+                counts.insert(note.track, 1);
+                state = Some((block, note.start_tick, note.end_tick, note.velocity));
+            }
+        }
+    }
+    if let Some((_, min_s, max_e, max_vel)) = state {
+        out.push(NoteInstance {
+            start_tick: min_s,
+            end_tick: max_e,
+            packed: NoteInstance::pack(key, dominant_track(&counts), max_vel),
+        });
+    }
+    out
+}
+
 /// 全量构建：`offsets` 把 `notes` 切成 per-key 段，逐 key 聚合。
 pub fn build_summary(
     notes: &[NoteInstance],
@@ -135,6 +207,9 @@ pub fn build_summaries(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pianoroll::build_key_notes_in_range;
+    use std::collections::HashSet;
+    use yinhe_test_helpers::make_midi;
 
     fn note(key: u8, track: u16, start: u32, end: u32) -> NoteInstance {
         NoteInstance {
@@ -142,6 +217,23 @@ mod tests {
             end_tick: end,
             packed: NoteInstance::pack(key, track, 100),
         }
+    }
+
+    #[test]
+    fn summary_in_range_matches_raw_then_summary() {
+        let midi = make_midi(vec![
+            (60, 0, 100, 0, 100),
+            (60, 110, 200, 1, 60),
+            (60, 5000, 5100, 0, 100),
+            (61, 50, 150, 0, 100),
+        ]);
+        let visible = [true, true];
+        let raw =
+            build_key_notes_in_range(&midi, 60, 0, 6000, &HashSet::new(), &visible, None, None);
+        let expected = build_key_summary(60, &raw, 1024);
+        let direct =
+            build_key_summary_in_range(&midi, 60, 0, 6000, 1024, &visible, &HashSet::new());
+        assert_eq!(direct, expected);
     }
 
     #[test]

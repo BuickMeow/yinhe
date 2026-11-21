@@ -44,6 +44,7 @@ pub use automation::{
 };
 pub use pianoroll::{
     PianorollRenderJob, SUMMARY_BLOCK_TICKS, SUMMARY_MAX_PX, build_all_notes, build_ghost_note,
-    build_key_notes, build_key_notes_in_range, build_key_summary, build_notes, build_render_job,
-    build_summaries, build_summary, build_summary_notes, select_summary_level,
+    build_key_notes, build_key_notes_in_range, build_key_summary, build_key_summary_in_range,
+    build_notes, build_render_job, build_summaries, build_summary, build_summary_notes,
+    select_summary_level,
 };

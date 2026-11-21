@@ -19,7 +19,7 @@ use yinhe_types::{KEY_COUNT, NoteSource, PianoRollView};
 
 use crate::layer_cache_key;
 use crate::pianoroll::{
-    SUMMARY_BLOCK_TICKS, build_key_notes_in_range, build_key_summary, select_summary_level,
+    SUMMARY_BLOCK_TICKS, build_key_notes_in_range, build_key_summary_in_range, select_summary_level,
 };
 use crate::vertex::NoteInstance;
 
@@ -179,27 +179,28 @@ impl NoteLayerCache {
                 continue;
             }
 
-            let mut instances = build_key_notes_in_range(
-                p.midi,
-                key,
-                window.tick_start,
-                window.tick_end,
-                p.hidden_notes,
-                p.track_visible,
-                if summary_block.is_none() {
-                    p.selection
-                } else {
-                    None
-                },
-                if summary_block.is_none() {
-                    Some(p.track_selected)
-                } else {
-                    None
-                },
-            );
-            if let Some(block) = summary_block {
-                instances = build_key_summary(key, &instances, block);
-            }
+            let instances = if let Some(block) = summary_block {
+                build_key_summary_in_range(
+                    p.midi,
+                    key,
+                    window.tick_start,
+                    window.tick_end,
+                    block,
+                    p.track_visible,
+                    p.hidden_notes,
+                )
+            } else {
+                build_key_notes_in_range(
+                    p.midi,
+                    key,
+                    window.tick_start,
+                    window.tick_end,
+                    p.hidden_notes,
+                    p.track_visible,
+                    p.selection,
+                    Some(p.track_selected),
+                )
+            };
             self.buckets[key as usize] = Some(KeyBucket {
                 instances,
                 tick_start: window.tick_start,
