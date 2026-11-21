@@ -11,6 +11,7 @@ serde = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+lz4_flex = "0.11"
 zstd = { version = "0.14", default-features = false }
 
 # 纯 std 基准（harness = false：直接运行 main，不用 #[bench]）

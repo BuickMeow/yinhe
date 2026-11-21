@@ -409,6 +409,31 @@ fn bench_delta(count: usize) {
     let zstd_decode_time = t4.elapsed();
     assert_eq!(decompressed.len(), encoded.len());
 
+    let grouped: Vec<Note> = notes.iter().map(|(n, _)| *n).collect();
+    let t5 = Instant::now();
+    let grouped_copy = grouped.clone();
+    let grouped_clone_time = t5.elapsed();
+    black_box(&grouped_copy);
+    drop(grouped_copy);
+
+    let t6 = Instant::now();
+    let zstd1 = zstd::encode_all(Cursor::new(&encoded), 1).expect("zstd1 encode");
+    let zstd1_encode_time = t6.elapsed();
+
+    let t7 = Instant::now();
+    let zstd1_decoded = zstd::decode_all(Cursor::new(&zstd1)).expect("zstd1 decode");
+    let zstd1_decode_time = t7.elapsed();
+    assert_eq!(zstd1_decoded.len(), encoded.len());
+
+    let t8 = Instant::now();
+    let lz4 = lz4_flex::compress_prepend_size(&encoded);
+    let lz4_encode_time = t8.elapsed();
+
+    let t9 = Instant::now();
+    let lz4_decoded = lz4_flex::decompress_size_prepended(&lz4).expect("lz4 decode");
+    let lz4_decode_time = t9.elapsed();
+    assert_eq!(lz4_decoded.len(), encoded.len());
+
     let per = |bytes: usize| bytes as f64 / notes.len() as f64;
     println!(
         "  {:<32} {:>10.2} B/音符  {:>10.1} ms",
@@ -417,16 +442,24 @@ fn bench_delta(count: usize) {
         clone_time.as_secs_f64() * 1e3
     );
     println!(
-        "  {:<32} {:>10.2} B/音符  {:>10.1} ms 编码",
-        "列式 delta",
-        per(encoded.len()),
-        encode_time.as_secs_f64() * 1e3
+        "  {:<32} {:>10.2} B/音符  {:>10.1} ms 拷贝",
+        "Vec<Note>（按 key 分组）",
+        per(grouped.len() * std::mem::size_of::<Note>()),
+        grouped_clone_time.as_secs_f64() * 1e3
     );
     println!(
-        "  {:<32} {:>10.2} B/音符  {:>10.1} ms 解码",
+        "  {:<32} {:>10.2} B/音符  {:>10.1} ms 编码  {:>10.1} ms 解码",
         "列式 delta",
         per(encoded.len()),
+        encode_time.as_secs_f64() * 1e3,
         decode_time.as_secs_f64() * 1e3
+    );
+    println!(
+        "  {:<32} {:>10.2} B/音符  {:>10.1} ms 编码  {:>10.1} ms 解码",
+        "列式 + zstd1",
+        per(zstd1.len()),
+        zstd1_encode_time.as_secs_f64() * 1e3,
+        zstd1_decode_time.as_secs_f64() * 1e3
     );
     println!(
         "  {:<32} {:>10.2} B/音符  {:>10.1} ms 编码  {:>10.1} ms 解码",
@@ -435,7 +468,348 @@ fn bench_delta(count: usize) {
         zstd_encode_time.as_secs_f64() * 1e3,
         zstd_decode_time.as_secs_f64() * 1e3
     );
-    black_box((decoded.len(), decompressed.len()));
+    println!(
+        "  {:<32} {:>10.2} B/音符  {:>10.1} ms 编码  {:>10.1} ms 解码",
+        "列式 + lz4",
+        per(lz4.len()),
+        lz4_encode_time.as_secs_f64() * 1e3,
+        lz4_decode_time.as_secs_f64() * 1e3
+    );
+    black_box((
+        decoded.len(),
+        decompressed.len(),
+        zstd1_decoded.len(),
+        lz4_decoded.len(),
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// 优化后原型：locate_at + 单点搬移 + 增量统计（仅 bench 内，不是生产代码）
+// ---------------------------------------------------------------------------
+
+const PROTO_CHUNK: usize = 65_536;
+
+struct ProtoBucket {
+    chunks: Vec<Vec<Note>>,
+    starts: Vec<u32>,
+    max_ends: Vec<u32>,
+}
+
+impl ProtoBucket {
+    fn from_sorted(notes: Vec<Note>) -> Self {
+        let mut chunks = Vec::new();
+        let mut starts = Vec::new();
+        let mut max_ends = Vec::new();
+        let mut current = Vec::with_capacity(PROTO_CHUNK);
+        let mut max_end = 0u32;
+        for n in notes {
+            if current.is_empty() {
+                starts.push(n.start_tick);
+            }
+            max_end = max_end.max(n.end_tick);
+            current.push(n);
+            if current.len() == PROTO_CHUNK {
+                max_ends.push(max_end);
+                max_end = 0;
+                chunks.push(std::mem::replace(
+                    &mut current,
+                    Vec::with_capacity(PROTO_CHUNK),
+                ));
+            }
+        }
+        if !current.is_empty() {
+            max_ends.push(max_end);
+            chunks.push(current);
+        }
+        Self {
+            chunks,
+            starts,
+            max_ends,
+        }
+    }
+
+    fn chunk_index_for(&self, tick: u32) -> usize {
+        self.starts
+            .partition_point(|&s| s <= tick)
+            .saturating_sub(1)
+    }
+
+    /// 生产版 `locate_at` 的等价原型。
+    fn locate_at(&self, start: u32, track: u16, id: u32) -> Option<(usize, usize)> {
+        if self.chunks.is_empty() {
+            return None;
+        }
+        let mut ci = self.chunk_index_for(start);
+        while ci > 0
+            && self.chunks[ci - 1]
+                .last()
+                .is_some_and(|n| n.start_tick >= start)
+        {
+            ci -= 1;
+        }
+        for (i, chunk) in self.chunks.iter().enumerate().skip(ci) {
+            let Some(first) = chunk.first() else {
+                continue;
+            };
+            if first.start_tick > start {
+                break;
+            }
+            let a = chunk.partition_point(|n| n.start_tick < start);
+            let b = chunk.partition_point(|n| n.start_tick <= start);
+            for (offset, n) in chunk[a..b].iter().enumerate() {
+                if n.track == track && n.id == id {
+                    return Some((i, a + offset));
+                }
+            }
+        }
+        None
+    }
+
+    fn refresh_chunk(&mut self, ci: usize) {
+        let chunk = &self.chunks[ci];
+        self.starts[ci] = chunk[0].start_tick;
+        self.max_ends[ci] = chunk.iter().map(|n| n.end_tick).max().unwrap_or(0);
+    }
+
+    fn remove_at(&mut self, start: u32, track: u16, id: u32) -> Option<Note> {
+        let (ci, idx) = self.locate_at(start, track, id)?;
+        let note = self.chunks[ci].remove(idx);
+        if self.chunks[ci].is_empty() {
+            self.chunks.remove(ci);
+            self.starts.remove(ci);
+            self.max_ends.remove(ci);
+        } else {
+            if idx == 0 {
+                self.starts[ci] = self.chunks[ci][0].start_tick;
+            }
+            if note.end_tick == self.max_ends[ci] {
+                self.refresh_chunk(ci);
+            }
+        }
+        Some(note)
+    }
+
+    fn insert_sorted(&mut self, note: Note) {
+        if self.chunks.is_empty() {
+            self.starts.push(note.start_tick);
+            self.max_ends.push(note.end_tick);
+            self.chunks.push(vec![note]);
+            return;
+        }
+        let ci = self.chunk_index_for(note.start_tick);
+        let chunk = &mut self.chunks[ci];
+        let pos = chunk.partition_point(|n| n.start_tick < note.start_tick);
+        chunk.insert(pos, note);
+        self.max_ends[ci] = self.max_ends[ci].max(note.end_tick);
+        if pos == 0 {
+            self.starts[ci] = chunk[0].start_tick;
+        }
+        if chunk.len() > PROTO_CHUNK {
+            let split_at = chunk.len() / 2;
+            let right = chunk.split_off(split_at);
+            self.starts[ci] = chunk[0].start_tick;
+            self.max_ends[ci] = chunk.iter().map(|n| n.end_tick).max().unwrap_or(0);
+            let right_max = right.iter().map(|n| n.end_tick).max().unwrap_or(0);
+            self.starts.insert(ci + 1, right[0].start_tick);
+            self.max_ends.insert(ci + 1, right_max);
+            self.chunks.insert(ci + 1, right);
+        }
+    }
+
+    fn update_end(
+        &mut self,
+        start: u32,
+        track: u16,
+        id: u32,
+        new_end: u32,
+    ) -> Option<(Note, Note)> {
+        let (ci, idx) = self.locate_at(start, track, id)?;
+        let old = self.chunks[ci][idx];
+        self.chunks[ci][idx].end_tick = new_end;
+        if new_end > self.max_ends[ci] {
+            self.max_ends[ci] = new_end;
+        } else if old.end_tick == self.max_ends[ci] && new_end < old.end_tick {
+            self.refresh_chunk(ci);
+        }
+        Some((old, self.chunks[ci][idx]))
+    }
+
+    fn update_start_keep_end(
+        &mut self,
+        start: u32,
+        track: u16,
+        id: u32,
+        new_start: u32,
+    ) -> Option<(Note, Note)> {
+        let mut note = self.remove_at(start, track, id)?;
+        let old = note;
+        note.start_tick = new_start.min(note.end_tick.saturating_sub(1));
+        self.insert_sorted(note);
+        Some((old, note))
+    }
+
+    fn max_end(&self) -> u32 {
+        self.max_ends.iter().copied().max().unwrap_or(0)
+    }
+}
+
+struct ProtoStats {
+    note_count: u64,
+    track_total: u64,
+    track_audible: u64,
+    bucket_total: u64,
+    bucket_track: std::collections::HashMap<u16, (u64, u64)>,
+    tick_length: u32,
+}
+
+impl ProtoStats {
+    fn from_bucket(bucket: &ProtoBucket) -> Self {
+        let mut s = Self {
+            note_count: 0,
+            track_total: 0,
+            track_audible: 0,
+            bucket_total: 0,
+            bucket_track: std::collections::HashMap::new(),
+            tick_length: 0,
+        };
+        for n in bucket.chunks.iter().flatten() {
+            s.add(n);
+        }
+        s.tick_length = bucket.max_end();
+        s
+    }
+
+    fn add(&mut self, n: &Note) {
+        self.note_count += 1;
+        self.track_total += 1;
+        self.bucket_total += 1;
+        if n.velocity > 1 {
+            self.track_audible += 1;
+        }
+        let e = self.bucket_track.entry(n.track).or_insert((0, 0));
+        e.0 += 1;
+        if n.velocity > 1 {
+            e.1 += 1;
+        }
+    }
+
+    fn remove(&mut self, n: &Note) {
+        self.note_count -= 1;
+        self.track_total -= 1;
+        self.bucket_total -= 1;
+        if n.velocity > 1 {
+            self.track_audible -= 1;
+        }
+        if let Some(e) = self.bucket_track.get_mut(&n.track) {
+            e.0 -= 1;
+            if n.velocity > 1 {
+                e.1 -= 1;
+            }
+        }
+    }
+
+    /// 单音符统计增量：before/after 二选一或都有；`new_max_end` 是桶级最大值。
+    fn apply(&mut self, before: Option<&Note>, after: Option<&Note>, new_max_end: u32) {
+        if let Some(n) = before {
+            self.remove(n);
+        }
+        if let Some(n) = after {
+            self.add(n);
+        }
+        self.tick_length = new_max_end;
+    }
+}
+
+fn bench_proto_after(count: usize, iters: usize, remove_iters: usize) {
+    print_header(&format!(
+        "优化后原型：{count} 音符/key（locate_at + 单点搬移 + 增量统计）"
+    ));
+
+    let mut rng = 0x0DDB_A11C_0FEE_1234;
+    let mut starts: Vec<u32> = (0..count)
+        .map(|_| (next_rng(&mut rng) % u64::from(MAX_TICK)) as u32)
+        .collect();
+    starts.sort_unstable();
+    let notes: Vec<Note> = starts
+        .iter()
+        .enumerate()
+        .map(|(i, &start)| Note {
+            id: (i + 1) as u32,
+            start_tick: start,
+            end_tick: start.saturating_add(10),
+            velocity: 100,
+            track: TRACK,
+        })
+        .collect();
+    let mut bucket = ProtoBucket::from_sorted(notes);
+    let mut stats = ProtoStats::from_bucket(&bucket);
+
+    let t0 = Instant::now();
+    for _ in 0..iters {
+        let i = (next_rng(&mut rng) as usize) % count;
+        let start = starts[i];
+        let id = (i + 1) as u32;
+        let new_end = start + 10 + (next_rng(&mut rng) % 100) as u32;
+        let (before, after) = bucket
+            .update_end(start, TRACK, id, new_end)
+            .expect("update_end 应命中");
+        stats.apply(Some(&before), Some(&after), bucket.max_end());
+        black_box((before, after));
+    }
+    print_op("改 end（原型）", t0.elapsed().as_secs_f64() / iters as f64);
+
+    let t1 = Instant::now();
+    for _ in 0..iters {
+        let i = (next_rng(&mut rng) as usize) % count;
+        let old = starts[i];
+        let id = (i + 1) as u32;
+        let mut new_start = (next_rng(&mut rng) % u64::from(MAX_TICK)) as u32;
+        if new_start == old {
+            new_start = new_start.saturating_add(1);
+        }
+        let (before, after) = bucket
+            .update_start_keep_end(old, TRACK, id, new_start)
+            .expect("左拉伸应命中");
+        starts[i] = after.start_tick;
+        stats.apply(Some(&before), Some(&after), bucket.max_end());
+        black_box((before, after));
+    }
+    print_op(
+        "左拉伸（原型：remove+insert）",
+        t1.elapsed().as_secs_f64() / iters as f64,
+    );
+
+    let mut used = std::collections::HashSet::with_capacity(remove_iters);
+    let mut removed = 0usize;
+    let t2 = Instant::now();
+    while removed < remove_iters {
+        let i = (next_rng(&mut rng) as usize) % count;
+        if !used.insert(i) {
+            continue;
+        }
+        let start = starts[i];
+        let id = (i + 1) as u32;
+        let before = bucket.remove_at(start, TRACK, id).expect("删除应命中");
+        stats.apply(Some(&before), None, bucket.max_end());
+        removed += 1;
+        black_box(before);
+    }
+    print_op(
+        "删除（原型）",
+        t2.elapsed().as_secs_f64() / remove_iters as f64,
+    );
+
+    println!(
+        "  原型说明：Vec<Vec<Note>>，无 Arc COW；真实编辑若音频持有快照会多一次 ≤1MB 块复制。"
+    );
+    println!(
+        "  统计结果自检：notes={} bucket={} track={} audible={} tick={}",
+        stats.note_count,
+        stats.bucket_total,
+        stats.track_total,
+        stats.track_audible,
+        stats.tick_length
+    );
 }
 
 fn main() {
@@ -443,10 +817,12 @@ fn main() {
     println!("note_hotpath_bench: build mode = release, quick = {quick}");
 
     bench_model(1_000_000, 100, 100, 3);
+    bench_proto_after(1_000_000, 100, 100);
     bench_delta(1_000_000);
 
     if !quick {
         bench_model(10_000_000, 10, 10, 1);
+        bench_proto_after(10_000_000, 10, 10);
         bench_delta(10_000_000);
     }
 
