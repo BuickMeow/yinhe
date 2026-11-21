@@ -1,6 +1,6 @@
 //! Automation event editing: add, move, delete, set-shape, apply-batch.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use yinhe_types::AutomationEdit;
@@ -141,17 +141,31 @@ impl Document {
         }
         let mut before: Vec<AutomationEvent> = Vec::new();
         let mut after: Vec<AutomationEvent> = Vec::with_capacity(merged.len());
+        // 与已排序的 lane.events 做一次归并，避免每个新点 iter().find + upsert
+        // 的 O(点数×事件数) 与反复 memmove。
+        let old_events = std::mem::take(&mut lane.events);
+        let mut old_iter = old_events.into_iter().peekable();
+        let mut out = Vec::with_capacity(old_iter.len() + merged.len());
         for (_, mut event) in merged {
-            if let Some(old) = lane.events.iter().find(|e| e.tick == event.tick).copied() {
+            while old_iter.peek().is_some_and(|e| e.tick < event.tick) {
+                if let Some(old) = old_iter.next() {
+                    out.push(old);
+                }
+            }
+            if old_iter.peek().is_some_and(|e| e.tick == event.tick) {
+                let old = old_iter.next().expect("peek 已确认存在");
                 if old.value >= event.value {
+                    out.push(old);
                     continue;
                 }
                 event.id = old.id;
                 before.push(old);
             }
-            lane.upsert(event);
             after.push(event);
+            out.push(event);
         }
+        out.extend(old_iter);
+        lane.events = out;
         if after.is_empty() {
             return None;
         }
@@ -539,29 +553,39 @@ impl Document {
         // 增量 before：原事件（old_tick 处）+ 冲突项（new_tick 处非本次移动的事件）。
         // 冲突项定义：插入时会移除 new_tick 残留事件——残留 = tick ∈ new_ticks
         // 且 tick ∉ old_ticks 的既有事件（本次移动的事件已被 remove）。
-        let old_ticks: std::collections::HashSet<u32> = moves.iter().map(|(o, _, _)| *o).collect();
+        let old_ticks: HashSet<u32> = moves.iter().map(|(o, _, _)| *o).collect();
+        let new_ticks: HashSet<u32> = moves
+            .iter()
+            .map(|(_, n, _)| *n)
+            .filter(|t| !old_ticks.contains(t))
+            .collect();
         let mut before: Vec<AutomationEvent> = Vec::with_capacity(moves.len() * 2);
-        for (old_tick, new_tick, _) in moves {
-            if let Some(ev) = events.iter().find(|e| e.tick == *old_tick) {
-                before.push(*ev);
+        let mut seen_old: HashSet<u32> = HashSet::new();
+        for old_tick in &old_ticks {
+            if let Ok(idx) = events.binary_search_by_key(old_tick, |e| e.tick) {
+                before.push(events[idx]);
+                seen_old.insert(*old_tick);
             }
-            if !old_ticks.contains(new_tick)
-                && let Some(ev) = events.iter().find(|e| e.tick == *new_tick)
+        }
+        for tick in &new_ticks {
+            if let Ok(idx) = events.binary_search_by_key(tick, |e| e.tick)
+                && !seen_old.contains(tick)
             {
-                before.push(*ev);
+                before.push(events[idx]);
             }
         }
 
-        // 收集每个 old_tick 对应的 (shape, id)，并从 events 移除。
+        // 收集每个 old_tick 对应的 (shape, id)，一次性移除（O(E)，不再逐个 remove）。
         // id 随事件移动保留（选择集成员身份不变）。
         let mut bases: Vec<(yinhe_types::SegmentShape, u32)> = Vec::with_capacity(moves.len());
         for (old_tick, _, _) in moves {
-            if let Some(idx) = events.iter().position(|e| e.tick == *old_tick) {
-                let e = events.remove(idx);
-                bases.push((e.shape, e.id));
-            } else {
-                bases.push((target.default_shape(), 0));
+            match events.binary_search_by_key(old_tick, |e| e.tick) {
+                Ok(idx) => bases.push((events[idx].shape, events[idx].id)),
+                Err(_) => bases.push((target.default_shape(), 0)),
             }
+        }
+        if !old_ticks.is_empty() {
+            events.retain(|e| !old_ticks.contains(&e.tick));
         }
         // 同 new_tick 先取最大値（与音频 dispatch 的 max 聚合一致）。
         let mut merged: BTreeMap<u32, (f32, yinhe_types::SegmentShape, u32)> = BTreeMap::new();
@@ -578,23 +602,38 @@ impl Document {
                 }
             }
         }
-        let mut after: Vec<AutomationEvent> = Vec::with_capacity(merged.len());
-        for (new_tick, (mut value, shape, id)) in merged {
-            // 移除 new_tick 处可能残留的旧事件；冲突值取 max。
-            if let Some(idx) = events.iter().position(|e| e.tick == new_tick) {
-                value = value.max(events[idx].value);
-                events.remove(idx);
+        // 冲突项：new_tick 处残留的旧事件，值与本次取 max，并整体删除。
+        for ev in events.iter() {
+            if let Some((value, _, _)) = merged.get_mut(&ev.tick) {
+                *value = value.max(ev.value);
             }
-            let insert_idx = events.partition_point(|e| e.tick < new_tick);
+        }
+        if !new_ticks.is_empty() {
+            events.retain(|e| !new_ticks.contains(&e.tick));
+        }
+        let mut after: Vec<AutomationEvent> = Vec::with_capacity(merged.len());
+        // 已排序的剩余事件 + 已排序的新事件，一次归并（O(E + M)）。
+        let old_events = std::mem::take(events);
+        let mut old_iter = old_events.into_iter().peekable();
+        let mut out = Vec::with_capacity(old_iter.len() + merged.len());
+        for (new_tick, (value, shape, id)) in merged {
+            while old_iter.peek().is_some_and(|e| e.tick < new_tick) {
+                if let Some(old) = old_iter.next() {
+                    out.push(old);
+                }
+            }
             let evt = AutomationEvent {
                 id,
                 tick: new_tick,
                 value,
                 shape,
             };
-            events.insert(insert_idx, evt);
             after.push(evt);
+            out.push(evt);
         }
+        out.extend(old_iter);
+        *events = out;
+        before.sort_by_key(|e| e.tick);
         model.commit_automation(target);
         self.data.bump_revision();
         Some(UndoAction::Automation(AutomationDelta {
