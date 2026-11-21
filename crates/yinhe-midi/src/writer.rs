@@ -386,7 +386,7 @@ fn dedup_note_index(notes: &mut Vec<NoteRef>, mut on_scan: impl FnMut(u64)) {
     let mut last_key = 0u8;
     let mut last_end = 0u32;
     for read in 0..notes.len() {
-        if read as u64 % PROGRESS_NOTE_INTERVAL == 0 {
+        if (read as u64).is_multiple_of(PROGRESS_NOTE_INTERVAL) {
             on_scan(read as u64);
         }
         let n = notes[read];
