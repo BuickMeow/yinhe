@@ -3,6 +3,7 @@
 //! Clip 只保存区间元数据，不保存音符；这些命令不改变音符内容，
 //! 唯一例外是 `ensure_clips_for_notes` 会扩展/新建 Clip 以覆盖新增音符。
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use yinhe_core::{Clip, NoteEvent};
@@ -334,18 +335,28 @@ impl Document {
         let mut after_notes = Vec::with_capacity(notes.len());
         {
             let model = Arc::make_mut(&mut self.data.model);
+            let mut by_key: HashMap<u8, Vec<yinhe_core::Note>> = HashMap::new();
             for (key, n) in &notes {
-                if let Some(removed) = model.remove_note_by_id(*key, n.id) {
+                by_key.entry(*key).or_default().push(*n);
+            }
+            for (key, key_notes) in by_key {
+                let ids: HashSet<u32> = key_notes.iter().map(|n| n.id).collect();
+                let bucket = Arc::make_mut(&mut model.notes[key as usize]);
+                let removed_count = bucket.remove_by_ids(&ids);
+                debug_assert_eq!(removed_count, key_notes.len());
+                let mut shifted = Vec::with_capacity(key_notes.len());
+                for r in key_notes {
                     let moved = yinhe_core::Note {
-                        start_tick: (removed.start_tick as i64 + delta) as u32,
-                        end_tick: (removed.end_tick as i64 + delta).max(0) as u32,
-                        ..removed
+                        start_tick: (r.start_tick as i64 + delta) as u32,
+                        end_tick: (r.end_tick as i64 + delta).max(0) as u32,
+                        ..r
                     };
-                    model.insert_note(*key, moved);
-                    model.mark_dirty(*key);
-                    before_notes.push((removed, *key));
-                    after_notes.push((moved, *key));
+                    before_notes.push((r, key));
+                    after_notes.push((moved, key));
+                    shifted.push(moved);
                 }
+                bucket.insert_batch_sorted(shifted);
+                model.mark_dirty(key);
             }
         }
         let note_action = Self::write_note_action(before_notes, after_notes);
@@ -392,6 +403,7 @@ impl Document {
         let base = self.notes_in_clip(track, clip.start_tick, clip.end_tick);
         let len = clip.end_tick.saturating_sub(clip.start_tick).max(1);
         let mut added: Vec<(yinhe_core::Note, u8)> = Vec::new();
+        let mut by_key: HashMap<u8, Vec<yinhe_core::Note>> = HashMap::new();
         let model = Arc::make_mut(&mut self.data.model);
         let mut offset = clip.end_tick;
         while offset < new_end {
@@ -407,11 +419,14 @@ impl Document {
                     ..*n
                 };
                 copy.start_tick = copy.start_tick.max(offset.saturating_sub(len));
-                model.insert_note(*key, copy);
-                model.mark_dirty(*key);
+                by_key.entry(*key).or_default().push(copy);
                 added.push((copy, *key));
             }
             offset = offset.saturating_add(len);
+        }
+        for (key, notes) in by_key {
+            Arc::make_mut(&mut model.notes[key as usize]).insert_batch_sorted(notes);
+            model.mark_dirty(key);
         }
         let mut after_clips = before_clips.clone();
         after_clips[idx].end_tick = new_end;
@@ -454,6 +469,7 @@ impl Document {
         let base = self.notes_in_clip(track, clip.start_tick, clip.end_tick);
         let len = clip.end_tick.saturating_sub(clip.start_tick).max(1);
         let mut added: Vec<(yinhe_core::Note, u8)> = Vec::new();
+        let mut by_key: HashMap<u8, Vec<yinhe_core::Note>> = HashMap::new();
         let model = Arc::make_mut(&mut self.data.model);
         let mut start_cursor = clip.start_tick;
         while start_cursor > new_start {
@@ -474,11 +490,14 @@ impl Document {
                     ..*n
                 };
                 copy.end_tick = copy.end_tick.max(copy.start_tick + 1);
-                model.insert_note(*key, copy);
-                model.mark_dirty(*key);
+                by_key.entry(*key).or_default().push(copy);
                 added.push((copy, *key));
             }
             start_cursor = offset;
+        }
+        for (key, notes) in by_key {
+            Arc::make_mut(&mut model.notes[key as usize]).insert_batch_sorted(notes);
+            model.mark_dirty(key);
         }
         let mut after_clips = before_clips.clone();
         after_clips[idx].start_tick = new_start;
