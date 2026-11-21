@@ -56,18 +56,6 @@ class _MarkerLayerState extends State<MarkerLayer> {
   /// 拖动预览：原 tick + 当前 x（画布逻辑像素）。
   int? _dragTick;
   double? _dragX;
-  List<RulerMarker>? _sortedInput;
-  List<RulerMarker> _sortedMarkers = const [];
-
-  /// 按 tick 排序的 marker 缓存：同一份输入列表在多次 build 间复用，
-  /// 播放/滚动导致 snap 每帧变化时不再重复 O(n log n) 排序。
-  List<RulerMarker> _sorted() {
-    if (!identical(_sortedInput, widget.markers)) {
-      _sortedInput = widget.markers;
-      _sortedMarkers = [...widget.markers]..sort((a, b) => a.tick - b.tick);
-    }
-    return _sortedMarkers;
-  }
 
   /// 小节.拍.tick（1.0.000 风格；Rust 按拍号分段计算）。
   String _formatTick(double tick, double ppq) {
@@ -146,7 +134,9 @@ class _MarkerLayerState extends State<MarkerLayer> {
         }
         final width = MediaQuery.sizeOf(context).width;
         double xOf(int tick) => tick * ppu - scrollX + origin;
-        final sorted = _sorted();
+        // conductor 事件在 Rust 侧始终按 tick 升序（event_rows_json 原序输出），
+        // 这里不再复制/排序，滚动只重算 x 和可见性。
+        final sorted = widget.markers;
         final insertStart = widget.onInsertStart;
         final scrub = widget.onScrub;
         final scrubEnd = widget.onScrubEnd;
