@@ -407,13 +407,34 @@ fn load_yin_bytes_inner(
     };
     // 流式加载：第一遍只解压 key 列统计每桶容量，第二遍 5 列同步解析直接
     // 喂 NoteLoader（id 已随流落盘，非 0 保留），finish 逐桶排序分块。
-    let key_counts = note_streams.key_counts()?;
+    let total_notes: u64 = model_data.segments.iter().map(|s| s.count as u64).sum();
+    let mut key_progress = |p: YinProgress| {
+        on_progress(YinProgress {
+            stage: p.stage,
+            fraction: p.fraction * 0.10,
+        });
+    };
+    let key_counts = note_streams.key_counts(&mut key_progress)?;
     let mut loader = NoteLoader::new(model.tracks.len(), model.next_note_id, key_counts);
-    note_streams.feed(&model_data.segments, &mut loader, on_progress)?;
-    loader.finish(&mut model);
+    let mut feed_progress = |p: YinProgress| {
+        on_progress(YinProgress {
+            stage: p.stage,
+            fraction: 0.10 + p.fraction * 0.75,
+        });
+    };
+    note_streams.feed(&model_data.segments, &mut loader, &mut feed_progress)?;
+    loader.finish_with_progress(&mut model, |done| {
+        on_progress(YinProgress {
+            stage: crate::YinProgressStage::Resort,
+            fraction: done as f32 / total_notes.max(1) as f32,
+        });
+    });
     // 自动化事件 id 不落盘：加载后统一发号（会话内身份，选择集/undo 用）。
     model.renumber_automation_ids();
-    model.rebuild();
+    // loader 已写回完整统计与有序桶，只需刷新 tempo map 并让缓存消费者
+    // 知道所有 key 都换了内容；不再全量重扫/排序。
+    model.refresh_tempo_map();
+    model.bump_all_note_revisions();
     // 片段 id 发号器推进到已用最大值 +1（避免新建片段撞 id）。
     model.next_audio_clip_id = model
         .tracks

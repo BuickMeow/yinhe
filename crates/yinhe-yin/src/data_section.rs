@@ -141,7 +141,8 @@ pub(crate) fn encode_note_streams(
 
     // 兜底：乱序桶先本地排（不写回模型，只影响本次归并源）。
     let mut sorted_copies: Vec<Option<Vec<yinhe_types::Note>>> = Vec::with_capacity(KEY_COUNT);
-    for (key, bucket) in model.notes.iter().enumerate() {
+    let mut collected = 0u64;
+    for bucket in model.notes.iter() {
         if bucket.is_sorted() {
             sorted_copies.push(None);
         } else {
@@ -149,10 +150,11 @@ pub(crate) fn encode_note_streams(
             b.sort_unstable_by_key(|n| n.start_tick);
             sorted_copies.push(Some(b));
         }
+        collected += bucket.len() as u64;
         progress(
             on_progress,
             YinProgressStage::Collect,
-            (key as f32 + 1.0) / KEY_COUNT as f32,
+            collected as f32 / total.max(1) as f32,
         );
     }
     let mut sources: Vec<Box<dyn Iterator<Item = &yinhe_types::Note> + '_>> =
@@ -164,20 +166,26 @@ pub(crate) fn encode_note_streams(
         }
     }
 
-    // 预扫描：最大 track 号 + 每轨音符数（per-track 列缓冲精确预分配）。
-    let mut max_track: usize = 0;
-    for bucket in model.notes.iter() {
-        for n in bucket.iter() {
-            max_track = max_track.max(n.track as usize);
-        }
-    }
-    let track_slots = max_track + 1;
-    let mut track_counts = vec![0u32; track_slots];
-    for bucket in model.notes.iter() {
-        for n in bucket.iter() {
-            track_counts[n.track as usize] += 1;
-        }
-    }
+    // 每轨音符数直接取模型已维护的统计，不再全量扫两遍音符。
+    // 最大 track 号从稀疏的 per-key 轨道统计里取（O(KEY_COUNT×轨数)）。
+    let max_track = model
+        .bucket_track_stats
+        .iter()
+        .flat_map(|m| m.keys())
+        .copied()
+        .max()
+        .unwrap_or(0) as usize;
+    let track_slots = (max_track + 1).max(model.tracks.len()).max(1);
+    let track_counts: Vec<u32> = (0..track_slots)
+        .map(|i| {
+            model
+                .track_note_count
+                .get(i)
+                .copied()
+                .unwrap_or(0)
+                .min(u32::MAX as u64) as u32
+        })
+        .collect();
 
     // per-track 列缓冲：同一 track 的音符按 start 递增出现，直接追加即段内有序。
     // key/vel 恒定 1B/音符精确分配；delta/gate/id 是 varint（多数 1B，少数更长），
@@ -456,13 +464,22 @@ pub(crate) fn open_note_streams<'a>(
 
 impl NoteStreamReaders<'_> {
     /// 第一遍：只解压 key 列统计每桶音符数，供 `NoteLoader` 精确预分配。
-    pub(crate) fn key_counts(&self) -> Result<[u32; KEY_COUNT], YinError> {
+    pub(crate) fn key_counts(
+        &self,
+        on_progress: &mut dyn FnMut(YinProgress),
+    ) -> Result<[u32; KEY_COUNT], YinError> {
         let mut counts = [0u32; KEY_COUNT];
         let mut r = FrameReader::new(self.key.data);
+        let total_bytes = self.key.data.len().max(1);
         while r.next_frame()? {
             for &b in &r.frame {
                 counts[b as usize] += 1;
             }
+            progress(
+                on_progress,
+                YinProgressStage::Rebuild,
+                r.pos as f32 / total_bytes as f32,
+            );
         }
         Ok(counts)
     }
@@ -619,7 +636,7 @@ mod tests {
 
         let (meta2, mut readers) = open_note_streams(&data, &mut |_| {}).unwrap();
         assert_eq!(meta2.segments.len(), 2, "两个非空轨各一段");
-        let counts = readers.key_counts().unwrap();
+        let counts = readers.key_counts(&mut |_| {}).unwrap();
         assert_eq!(counts.iter().sum::<u32>(), 3);
 
         let mut loader = NoteLoader::new(2, 1, counts);

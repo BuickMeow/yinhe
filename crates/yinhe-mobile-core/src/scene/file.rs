@@ -397,8 +397,10 @@ pub fn save_project_start(path: String) -> i32 {
                 |p| {
                     let (start, end) = match p.stage {
                         yinhe_yin::YinProgressStage::Collect => (0.0, 0.05),
-                        yinhe_yin::YinProgressStage::Sort => (0.05, 0.65),
-                        yinhe_yin::YinProgressStage::Compress => (0.65, 1.0),
+                        // Sort 阶段含归并、列编码与分帧 zstd，是真正的重活；
+                        // Compress 只是拼接已压缩好的流，权重不能给 35%。
+                        yinhe_yin::YinProgressStage::Compress => (0.95, 1.0),
+                        yinhe_yin::YinProgressStage::Sort => (0.05, 0.95),
                         _ => (0.0, 1.0),
                     };
                     let next = start + (end - start) * p.fraction.clamp(0.0, 1.0);
@@ -574,10 +576,12 @@ fn load_project_document(path: &str, token: u64) -> Result<Document, String> {
     set_load_progress(token, 0.02);
     let (model, sf, mapping, mixer, cover) = yinhe_yin::load_yin_with_sf_progress(path, |p| {
         let frac = match p.stage {
-            yinhe_yin::YinProgressStage::Decompress => p.fraction * 0.55,
-            yinhe_yin::YinProgressStage::Rebuild => 0.55 + p.fraction * 0.25,
-            yinhe_yin::YinProgressStage::Resort => 0.80 + p.fraction * 0.10,
-            _ => p.fraction * 0.90,
+            // 解压 6 个外层流很快；key 列预扫描 + 五列喂入 + 逐桶排序
+            // 才是主体，Resort 负责 loader.finish 的逐桶写回。
+            yinhe_yin::YinProgressStage::Decompress => p.fraction * 0.15,
+            yinhe_yin::YinProgressStage::Rebuild => 0.15 + p.fraction * 0.70,
+            yinhe_yin::YinProgressStage::Resort => 0.85 + p.fraction * 0.15,
+            _ => p.fraction,
         };
         set_load_progress(token, 0.02 + frac * 0.88);
     })
