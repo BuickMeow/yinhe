@@ -142,6 +142,11 @@ impl Document {
         self.history.future_labels()
     }
 
+    /// 是否还有可重做的操作（不分配标签 Vec）。
+    pub fn has_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
     /// Undo the most recent operation. Returns true if something was undone.
     pub fn undo(&mut self) -> bool {
         let Some((id, entry)) = self.history.take_past() else {

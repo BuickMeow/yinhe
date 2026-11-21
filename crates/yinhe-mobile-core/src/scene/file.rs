@@ -660,7 +660,7 @@ pub fn doc_state() -> [i32; 3] {
     };
     [
         i32::from(doc.undo_past_len() > 0),
-        i32::from(!doc.redo_labels().is_empty()),
+        i32::from(doc.has_redo()),
         i32::from(doc.is_dirty()),
     ]
 }
