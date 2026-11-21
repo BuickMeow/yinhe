@@ -304,8 +304,10 @@ pub(super) fn upload_arrangement(
         model_epoch,
     ])
     .max(1);
-    let mut ghost = preview.ghost.as_ref().clone();
     t.renderer.upload_note_layer(2, ghost_key, |out| {
+        // 只在层真正需要重建时（key 变了）才深拷贝 ghost；拖动大选区时
+        // 每帧几十 MB 的纯拷贝不能发生在缓存命中路径上。
+        let mut ghost = preview.ghost.as_ref().clone();
         yinhe_wgpu::build_ghost_notes(
             out,
             ghost.as_mut_slice(),
