@@ -13,13 +13,13 @@ use yinhe_types::Note;
 use crate::model::YinModel;
 
 impl YinModel {
-    /// 桶内按 id 定位（只读）。
+    /// 桶内按 id 定位（只读）。冷路径/测试用；热路径请用 `*_at`。
     pub fn note_by_id(&self, key: u8, id: u32) -> Option<&Note> {
         self.notes[key as usize].iter().find(|n| n.id == id)
     }
 
-    /// 桶内按 id 更新：`f` 修改命中音符；内部 `sort`（`is_sorted` 早退）
-    /// + `mark_dirty`。返回更新后的音符副本；未命中返回 `None`。
+    /// 桶内按 id 更新（冷路径/基准用）。生产单音符编辑请用
+    /// [`update_note_at`](Self::update_note_at)，避免全桶扫 id + 无条件 sort。
     pub fn update_note_by_id(
         &mut self,
         key: u8,
@@ -92,7 +92,8 @@ impl YinModel {
         Some((before, after))
     }
 
-    /// 桶内按 id 移除（内部 `mark_dirty`）。
+    /// 桶内按 id 移除（冷路径/基准用）。生产单音符删除请用
+    /// [`remove_note_at`](Self::remove_note_at)。
     pub fn remove_note_by_id(&mut self, key: u8, id: u32) -> Option<Note> {
         let bucket = Arc::make_mut(&mut self.notes[key as usize]);
         let removed = bucket.remove_by_id(id)?;
@@ -113,7 +114,8 @@ impl YinModel {
         self.note_revisions[key as usize] = self.note_revisions[key as usize].wrapping_add(1);
     }
 
-    /// 按 id 把音符移到 `(new_key, new_start_tick)`（保留 id 与 **gate**）。
+    /// 按 id 把音符移到 `(new_key, new_start_tick)`（冷路径/基准用）。
+    /// 生产单音符移动请用 [`move_note_at`](Self::move_note_at)。
     ///
     /// 内部完成旧桶移除、新桶保序插入与两侧 `mark_dirty`。
     /// 返回 `(before, after)`；未命中返回 `None`。
