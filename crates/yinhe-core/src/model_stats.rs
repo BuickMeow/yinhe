@@ -241,10 +241,22 @@ impl YinModel {
     /// 所以 rebuild_dirty 路径只需关心 tick_length 是否变了——tempo_map
     /// 内部缓存了 tick_length 字段，需要同步。
     pub fn rebuild_dirty(&mut self) {
+        self.rebuild_dirty_with_progress(|_, _| {});
+    }
+
+    /// 同 [`rebuild_dirty`](Self::rebuild_dirty)，按脏 key 内**当前音符数**
+    /// 回报 `(done, total)`。批量导入一次弄脏所有 key 时，UI 不再在
+    /// 100% 后继续静默重扫。
+    pub fn rebuild_dirty_with_progress(&mut self, mut on_notes: impl FnMut(u64, u64)) {
         let dirty_indices: Vec<usize> = (0..KEY_COUNT).filter(|&k| self.dirty_keys[k]).collect();
         if dirty_indices.is_empty() {
             return;
         }
+        let dirty_total: u64 = dirty_indices
+            .iter()
+            .map(|&k| self.notes[k].len() as u64)
+            .sum();
+        let mut dirty_done = 0u64;
 
         let prev_tick_length = self.tick_length;
         self.dirty_keys = [false; KEY_COUNT];
@@ -300,6 +312,8 @@ impl YinModel {
                 }
             }
             self.bucket_track_stats[k] = new_stats;
+            dirty_done += self.notes[k].len() as u64;
+            on_notes(dirty_done, dirty_total);
         }
 
         // 4. Rebuild tempo_map only if tick_length changed.

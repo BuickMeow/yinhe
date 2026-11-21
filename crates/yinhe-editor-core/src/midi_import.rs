@@ -332,6 +332,7 @@ pub fn merge_midi_into_model(
     let note_id_start = dst.next_note_id;
     let mut note_count = 0u64;
     let mut note_keys: Vec<u8> = Vec::new();
+    let src_total = src.note_count.max(1);
     for key in 0..=MAX_KEY {
         let mut notes: Vec<Note> = Vec::new();
         for n in src.notes[key as usize].iter() {
@@ -353,18 +354,23 @@ pub fn merge_midi_into_model(
             Arc::make_mut(&mut dst.notes[key as usize]).insert_batch_sorted(notes);
             dst.mark_dirty(key);
         }
-        progress((key as f32 + 1.0) / 128.0);
+        // 复制阶段占 85%；剩余 15% 留给 rebuild_dirty/tempo map。
+        progress(note_count as f32 / src_total as f32 * 0.85);
     }
     let note_id_end = dst.next_note_id;
 
     // Note buckets are merged sorted, and track stats arrays were grown before
     // insertion. `rebuild_dirty` updates only touched keys; conductor lists
     // changed independently, so rebuild the tempo map explicitly.
-    dst.rebuild_dirty();
+    dst.rebuild_dirty_with_progress(|done, total| {
+        progress(0.85 + done as f32 / total.max(1) as f32 * 0.10);
+    });
     // 纯事件导入（标记/速度没有音符）也要把时间线扩展到导入末尾。
     dst.tick_length = dst.tick_length.max(imported_end as u64);
+    progress(0.96);
     dst.rebuild_tempo_map();
     dst.sync_automation_lane_tracks();
+    progress(1.0);
 
     Some(MidiImportMerged {
         tracks_before,
@@ -471,6 +477,45 @@ mod tests {
             ids.iter()
                 .all(|&id| id >= merged.note_id_start && id < merged.note_id_end)
         );
+    }
+
+    #[test]
+    fn merge_progress_advances_by_notes() {
+        let mut dst = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        dst.rebuild();
+        let mut src = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        let notes: Vec<NoteEvent> = (0..120_000u32)
+            .map(|i| NoteEvent {
+                id: 0,
+                start_tick: i,
+                end_tick: i + 10,
+                key: 60 + (i % 12) as u8,
+                velocity: 100,
+            })
+            .collect();
+        src.load_track_notes(vec![notes]);
+        src.rebuild();
+
+        let mut samples = Vec::new();
+        merge_midi_into_model(&mut dst, src, &MidiImportOptions::default(), |p| {
+            samples.push(p)
+        })
+        .expect("应导入");
+        assert!(
+            samples.windows(2).all(|w| w[1] >= w[0]),
+            "合并进度必须单调：{samples:?}"
+        );
+        assert!(
+            samples.iter().any(|&p| p > 0.0 && p < 1.0),
+            "合并阶段应有中间进度：{samples:?}"
+        );
+        assert_eq!(samples.last().copied(), Some(1.0));
     }
 
     #[test]
