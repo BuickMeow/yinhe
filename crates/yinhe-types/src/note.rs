@@ -21,6 +21,8 @@ pub struct Note {
     pub track: u16,
 }
 
+const _: () = assert!(std::mem::size_of::<Note>() == 16);
+
 /// automation 面板 velocity 笔划输出：修改单个音符的 velocity。
 /// 按 (track, start_tick, key) 寻址，与 `Document::set_notes_velocity` 对应。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

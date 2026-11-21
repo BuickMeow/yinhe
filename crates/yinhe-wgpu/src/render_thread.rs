@@ -28,7 +28,7 @@ pub struct RenderJob {
     pub note_layers: Vec<NoteLayerData>,
 }
 
-/// Pre-built note layer data (16B NoteInstance).
+/// Pre-built note layer data (12B NoteInstance).
 pub struct NoteLayerData {
     pub instances: Vec<crate::vertex::NoteInstance>,
     pub cache_key: u64,

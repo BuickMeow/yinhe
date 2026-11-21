@@ -80,7 +80,7 @@ fn flush_track_bucket(
 /// （含展开的自动化 lane）计算——均匀行假设下可用
 /// ArrangementView::visible_track_range，展开后须用 ArRowLayout。
 ///
-/// Output is 16B `NoteInstance` (semantic data only: ticks, key, track, vel).
+/// Output is 12B `NoteInstance` (semantic data only: ticks, key, track, vel).
 /// All pixel positions and colors are computed in the GPU vertex shader:
 ///   - x/w: ticks → pixels via ppu + scroll_x (same as before)
 ///   - y/h: shader computes from lane_height + scroll_y + key + track

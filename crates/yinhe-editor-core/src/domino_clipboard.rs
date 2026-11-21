@@ -36,6 +36,8 @@ pub struct DominoNote {
     pub velocity: u8,
 }
 
+const _: () = assert!(std::mem::size_of::<DominoNote>() == 12);
+
 /// 一份 Domino 剪贴板：PPQ + 每轨音符（Conductor 轨不计数）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DominoClipboard {

@@ -193,7 +193,7 @@ fn fill_key_instances(
 /// Build note instances (layer 2).
 /// Dependencies: selection, track_visible, tick range (scroll_x)
 ///
-/// Output is 16B `NoteInstance` (semantic data only: ticks, key, track, vel).
+/// Output is 12B `NoteInstance` (semantic data only: ticks, key, track, vel).
 /// All pixel positions and colors are computed in the GPU vertex shader from
 /// uniforms, so scroll_y and key_height changes do NOT invalidate the cache.
 ///
@@ -320,7 +320,7 @@ pub fn build_all_notes(
 ) -> (Vec<NoteInstance>, [u32; KEY_COUNT + 1]) {
     // 计数（无实例构造）→ 前缀和一次分配 → 按 key 并行分段写入：
     // 旧实现「每 key 一个 Vec + 串行 extend」在 1.64 亿音符时中间结果与最终
-    // 缓冲同时存在（峰值约 5GB），现在峰值只有最终缓冲一份（约 2.6GB）。
+    // 缓冲同时存在（峰值约 5GB），现在峰值只有最终缓冲一份（约 1.97GB）。
     let counts: Vec<usize> = (0u8..=MAX_KEY)
         .into_par_iter()
         .map(|key| count_key_instances(midi, key, track_visible, hidden_notes))

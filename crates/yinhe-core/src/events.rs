@@ -20,3 +20,5 @@ pub struct NoteEvent {
     pub key: u8,
     pub velocity: u8,
 }
+
+const _: () = assert!(std::mem::size_of::<NoteEvent>() == 16);

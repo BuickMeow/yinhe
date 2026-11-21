@@ -20,6 +20,8 @@ pub struct NoteSummary {
     pub velocity: u8,
 }
 
+const _: () = assert!(std::mem::size_of::<NoteSummary>() == 16);
+
 /// 单个 key 的摘要层。
 #[derive(Clone, Debug, Default)]
 pub struct KeySummary {

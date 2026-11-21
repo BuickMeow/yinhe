@@ -116,7 +116,7 @@ pub struct GpuBudget {
     total_limit: u64,
 }
 
-/// 默认总预算：8 GiB。100M 音符全量 all_notes + visible_notes ≈ 3.2GB，
+/// 默认总预算：8 GiB。100M 音符全量 all_notes + visible 索引 ≈ 1.6GB，
 /// 留出编辑/多视图余量。
 const DEFAULT_TOTAL_LIMIT: u64 = 8 * 1024 * 1024 * 1024;
 

@@ -41,7 +41,7 @@ impl VelocitySummary {
     ///
     /// 实现：每档一个并行任务，串行扫描 128 个 key 的音符，用普通数组
     /// 记录每块最大 `(vel << 16) | track`（vel 优先），最后转稀疏列表。
-    /// 9 档并行，总墙钟约为单遍扫描的时间。
+    /// 8 档并行，总墙钟约为单遍扫描的时间。
     pub fn build(midi: &dyn NoteSource, track_visible: &[bool]) -> Self {
         let total_ticks = midi
             .tick_length()

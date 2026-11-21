@@ -5,8 +5,8 @@
 //! dispatch loops over keys; each key's visible capacity equals its all-notes
 //! capacity, so there is no global visible-note cap.
 //!
-//! Memory: all_notes + visible_notes ≈ 2 × total notes × 16B (worst case:
-//! minimum zoom, every note visible). H2O.mid (13.8M) ≈ 374MB; 100M ≈ 3.2GB.
+//! Memory: all_notes 12B/音符 + visible 4B 索引/槽（稀疏槽按 256 对齐）。
+//! 100M 音符约 1.2GB + 0.4GB；8 档 LOD 摘要另计（40M 实测约 49MB）。
 //!
 //! 模块拆分（无 mod.rs 的现代写法）：
 //! - `bucket.rs`：KeyBucketIndex —— CPU tick 桶索引（每帧只 dispatch 可见 chunk）。
