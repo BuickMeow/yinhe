@@ -150,6 +150,7 @@ impl CullRebuild {
 ///
 /// 返回 `None` 表示线程 spawn 失败（栈内存不足等）：调用方降级为同步全量，
 /// 绝不 panic。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn start_rebuild(
     model: Arc<YinModel>,
     hidden_notes: HashSet<(u16, u32, u8)>,
