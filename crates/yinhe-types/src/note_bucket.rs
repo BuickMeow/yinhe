@@ -451,11 +451,12 @@ impl NoteBucket {
             }
             return;
         }
-        let mut result: Vec<Arc<Vec<Note>>> = Vec::with_capacity(self.chunks.len() + 1);
+        let old_chunks = std::mem::take(&mut self.chunks);
+        let mut result: Vec<Arc<Vec<Note>>> = Vec::with_capacity(old_chunks.len() + 1);
         let mut starts = Vec::with_capacity(result.capacity());
         let mut max_ends = Vec::with_capacity(result.capacity());
         let mut cursor = 0usize;
-        for chunk in &self.chunks {
+        for chunk in old_chunks {
             // 首元素落在本块区间（<= 本块尾）的新音符归入本块一起归并。
             let end = chunk
                 .last()
@@ -463,8 +464,9 @@ impl NoteBucket {
                     new[cursor..].partition_point(|n| n.start_tick <= last.start_tick) + cursor
                 })
                 .unwrap_or(cursor);
-            let merged = merge_runs(chunk, &new[cursor..end]);
+            let merged = merge_runs(&chunk, &new[cursor..end]);
             cursor = end;
+            // 旧块在本轮结束时 drop；若没有其他 Arc 持有，内存立即释放。
             for part in merged.chunks(BUCKET_CHUNK_CAP) {
                 starts.push(part[0].start_tick);
                 max_ends.push(part.iter().map(|n| n.end_tick).max().unwrap_or(0));
