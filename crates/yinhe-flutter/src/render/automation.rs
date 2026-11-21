@@ -58,10 +58,11 @@ pub fn render_automation_frame(
         let Ok(s) = crate::scene::scene().lock() else {
             return;
         };
-        let state = s.automation_panel.clone();
-        if !state.visible || state.w < 1.0 || state.h < 1.0 {
+        // 收起时不克隆 ghost/selected_ticks（拖动过大量锚点时可能很大）。
+        if !s.automation_panel.visible || s.automation_panel.w < 1.0 || s.automation_panel.h < 1.0 {
             return;
         }
+        let state = s.automation_panel.clone();
         let Some(model) = s.model.clone() else {
             return;
         };
