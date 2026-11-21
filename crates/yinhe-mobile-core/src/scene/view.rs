@@ -391,7 +391,8 @@ pub fn ruler_labels_json() -> String {
     let start_tick = (((-kb_w + scroll_x) / ppu).max(0.0)) as f64;
     let end_tick = (((width - kb_w + scroll_x) / ppu).max(0.0)) as f64;
     let end_i = end_tick.floor() as i64;
-    let mut labels: Vec<serde_json::Value> = Vec::new();
+    let mut out = String::from("[");
+    let mut first_label = true;
 
     for (i, &(seg_start, num, den)) in segments.iter().enumerate() {
         if seg_start as f64 > end_tick {
@@ -440,13 +441,21 @@ pub fn ruler_labels_json() -> String {
                     (String::new(), 4)
                 };
                 if !text.is_empty() {
-                    labels.push(serde_json::json!({"x": x, "text": text, "level": level}));
+                    if !first_label {
+                        out.push(',');
+                    }
+                    first_label = false;
+                    out.push_str(&format!(
+                        "{{\"x\":{x},\"text\":\"{}\",\"level\":{level}}}",
+                        json_escape(&text)
+                    ));
                 }
             }
             tick += step;
         }
     }
-    serde_json::Value::Array(labels).to_string()
+    out.push(']');
+    out
 }
 
 /// 时间网格线：Dart 只负责画，拍号分段/密度/层级全部在这里算。
@@ -491,7 +500,8 @@ pub fn time_grid_json() -> String {
     let sub_ticks = (ppq / 4).max(1);
     // AR 只画小节/拍线；PR/AM 才有细分和 tick 层。Auto 量化用同一开关。
     let allow_sub = matches!(s.view_mode, ViewMode::Pianoroll);
-    let mut lines: Vec<serde_json::Value> = Vec::new();
+    let mut out = String::from("[");
+    let mut first_line = true;
 
     for (i, &(seg_start, num, den)) in segments.iter().enumerate() {
         if seg_start as f64 > end_tick {
@@ -534,12 +544,17 @@ pub fn time_grid_json() -> String {
                 None
             };
             if let Some(level) = level {
-                lines.push(serde_json::json!({"tick": tick, "level": level}));
+                if !first_line {
+                    out.push(',');
+                }
+                first_line = false;
+                out.push_str(&format!("{{\"tick\":{tick},\"level\":{level}}}"));
             }
             tick += step as i64;
         }
     }
-    serde_json::Value::Array(lines).to_string()
+    out.push(']');
+    out
 }
 
 /// 视图快照（Dart 文本浮层用），固定 13 个 f32：
